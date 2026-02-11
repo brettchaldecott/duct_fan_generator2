@@ -150,10 +150,11 @@ class StructuralValidator:
             f_pull_per_pole = 5.0 * (magnet_d / 8.0)**2 * (magnet_t / 3.0)
             f_pull_total = f_pull_per_pole * n_poles * 2  # both sides
 
-            # Hoop stress (thin cylinder under external pressure equivalent)
+            # Hoop stress: convert force to equivalent pressure on thin cylinder,
+            # then apply σ_hoop = p × r / t.
+            # p = F / (2π × r × L), so σ = F / (2π × t × L)
             coupling_zone_length = magnet_d + 4  # mm, zone length
-            sigma = f_pull_total * hub_r / (wall_t * coupling_zone_length)  # MPa equivalent
-            sigma_mpa = sigma  # Already roughly in MPa for these dimensions
+            sigma_mpa = f_pull_total / (2 * math.pi * wall_t * coupling_zone_length)
 
             allowable = uts / required_sf
             sf_actual = uts / sigma_mpa if sigma_mpa > 0 else float("inf")

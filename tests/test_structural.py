@@ -58,22 +58,19 @@ class TestGearStress:
         results = validator.check_gear_tooth_bending()
         sun_stress = next(r for r in results if "sun" in r.component)
         planet_stress = next(r for r in results if "planet" in r.component)
-        # Sun has 20 teeth, planet has 10 — planet is more stressed
+        # Sun has more teeth than planet — planet is more stressed
         assert planet_stress.actual_stress >= sun_stress.actual_stress
 
-    def test_planet_gear_flagged(self, default_config):
-        """Planet gear with 10 teeth should be flagged as high stress.
-
-        The plan notes: 'P=10 IS below minimum — may need profile shift or 25° pressure angle.
-        Validator will catch this.'
-        """
+    def test_planet_gear_stress_computed(self, default_config):
+        """Planet gear stress is computed and within limits."""
         validator = StructuralValidator(default_config)
         results = validator.check_gear_tooth_bending()
         planet = next(r for r in results if "planet" in r.component)
-        # 10 teeth at 20° pressure angle is problematic — validator should flag it
         assert planet.actual_stress > 0  # stress is computed
-        # This may or may not pass depending on exact load — the important thing
-        # is that it's flagged with a low safety factor
+        assert planet.passed, (
+            f"Planet gear stress {planet.actual_stress:.1f} MPa > "
+            f"allowable {planet.allowable_stress:.1f} MPa"
+        )
 
 
 class TestHubStress:

@@ -21,7 +21,7 @@ class TestCouplingAnalysis:
         """Thicker magnets should produce more torque."""
         coupling = MagneticCoupling(default_config)
         stages = default_config["magnetic_coupling"]["stages"]
-        # Stage 0: 3mm thick, Stage 1: 5mm thick (same diameter)
+        # Stage 0: 5mm thick, Stage 1: 6mm thick (same diameter)
         t0 = coupling.estimate_peak_torque(stages[0])
         t1 = coupling.estimate_peak_torque(stages[1])
         assert t1 > t0, "5mm magnets should produce more torque than 3mm"

@@ -61,22 +61,30 @@ class TestUndercutting:
         specs = gen.compute_gear_specs()
         assert not gen.check_undercutting(specs["sun"])
 
-    def test_planet_undercut_risk(self, default_config):
-        """Planet gear (10 teeth, 20° PA) SHOULD be flagged for undercutting.
+    def test_planet_no_undercut(self, default_config):
+        """Planet gear (12 teeth, 25° PA) should NOT be flagged for undercutting.
 
-        Minimum teeth for 20° PA is 17.
+        Minimum teeth for 25° PA is 12.
         """
         gen = GearGenerator(default_config)
         specs = gen.compute_gear_specs()
-        assert gen.check_undercutting(specs["planet"]), (
-            "10-tooth planet at 20° PA should be flagged for undercutting"
+        assert not gen.check_undercutting(specs["planet"]), (
+            "12-tooth planet at 25° PA should not be undercut"
         )
 
-    def test_min_teeth_20deg(self, default_config):
-        """Minimum teeth for 20° PA: ceil(2/sin²(20°)) = 18."""
+    def test_small_gear_undercut_detected(self, default_config):
+        """A gear with fewer teeth than the minimum should be flagged."""
         gen = GearGenerator(default_config)
-        # 2 / sin²(20°) = 2 / 0.1170 = 17.097, ceil = 18
-        assert gen.min_teeth_no_undercut() == 18
+        min_teeth = gen.min_teeth_no_undercut()
+        # Create a spec with too few teeth
+        small_spec = gen._make_spec("test_small", min_teeth - 1, internal=False)
+        assert gen.check_undercutting(small_spec)
+
+    def test_min_teeth_25deg(self, default_config):
+        """Minimum teeth for 25° PA: ceil(2/sin²(25°)) = 12."""
+        gen = GearGenerator(default_config)
+        # 2 / sin²(25°) = 2 / 0.1786 = 11.20, ceil = 12
+        assert gen.min_teeth_no_undercut() == 12
 
 
 class TestGearRatio:
@@ -113,15 +121,15 @@ class TestGearValidator:
         backlash_result = next(r for r in results if r.check_name == "backlash")
         assert backlash_result.passed
 
-    def test_undercutting_flagged_by_validator(self, default_config):
-        """Validator flags planet gear undercutting."""
+    def test_undercutting_passes_for_valid_gears(self, default_config):
+        """Validator confirms planet gear (12 teeth, 25° PA) has no undercut."""
         validator = GearValidator(default_config)
         results = validator.validate_all()
         planet_undercut = next(
             r for r in results
             if r.check_name == "undercutting" and r.gear_name == "planet"
         )
-        assert not planet_undercut.passed  # Should be flagged
+        assert planet_undercut.passed  # 12 teeth at 25° PA is safe
 
     def test_all_results_have_details(self, default_config):
         """All validation results include detail strings."""

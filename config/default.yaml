@@ -11,38 +11,38 @@ motor:
   voltage: 12.0               # V
 
 duct:
-  inner_diameter: 270.0       # mm
+  inner_diameter: 200.0       # mm (sized for motor capacity)
   wall_thickness: 4.0         # mm
   length_factor: 1.2          # multiplier of hub length
   bellmouth_radius: 15.0      # mm
 
 gears:
-  module: 1.0                 # mm
-  sun_teeth: 20
-  planet_teeth: 10
-  ring_teeth: 40              # must equal sun + 2*planet
+  module: 1.5                 # mm (wider teeth for strength)
+  sun_teeth: 24
+  planet_teeth: 12
+  ring_teeth: 48              # must equal sun + 2*planet
   num_planets: 3
-  pressure_angle: 20.0        # degrees
-  gear_width: 8.0             # mm
-  backlash_compensation: 0.15 # mm
+  pressure_angle: 25.0        # degrees (reduces bending stress, raises undercut threshold)
+  gear_width: 10.0            # mm
+  backlash_compensation: 0.20 # mm
   num_stages: 2
   efficiency_per_stage: 0.95  # for system simulation
 
 magnetic_coupling:
   stages:
-    - magnet_diameter: 8.0
-      magnet_thickness: 3.0
+    - magnet_diameter: 12.0
+      magnet_thickness: 5.0
+      num_pole_pairs: 8
+      coupling_radius: 38.0
+    - magnet_diameter: 12.0
+      magnet_thickness: 6.0
+      num_pole_pairs: 8
+      coupling_radius: 38.0
+    - magnet_diameter: 12.0
+      magnet_thickness: 6.0
       num_pole_pairs: 6
-      coupling_radius: 32.0
-    - magnet_diameter: 8.0
-      magnet_thickness: 5.0
-      num_pole_pairs: 5
-      coupling_radius: 32.0
-    - magnet_diameter: 10.0
-      magnet_thickness: 5.0
-      num_pole_pairs: 5
-      coupling_radius: 32.0
-  wall_thickness: 1.5         # mm
+      coupling_radius: 38.0
+  wall_thickness: 2.0         # mm
   magnet_grade: "N52"
   magnet_pocket_clearance: 0.2
   required_safety_factor: 2.0
@@ -100,10 +100,10 @@ bearings:
 materials:
   blade:
     name: "PLA CF"
-    density: 1250           # kg/m³
+    density: 1250           # kg/m3
     elastic_modulus: 4000   # MPa
     tensile_strength: 50    # MPa
-    max_temp: 55            # °C
+    max_temp: 55            # C
   mechanical:
     name: "PETG CF"
     density: 1300
@@ -117,4 +117,4 @@ print:
   max_build_z: 300.0
   nozzle_diameter: 0.4
   layer_height: 0.2
-  min_wall_thickness: 0.8  # 2 × nozzle
+  min_wall_thickness: 0.8  # 2 x nozzle
