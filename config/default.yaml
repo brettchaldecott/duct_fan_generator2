@@ -44,7 +44,7 @@ magnetic_coupling:
       coupling_radius: 38.0
   wall_thickness: 2.0         # mm
   magnet_grade: "N52"
-  magnet_pocket_clearance: 0.2
+  magnet_pocket_clearance: 0.1
   required_safety_factor: 2.0
 
 blades:

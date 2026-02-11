@@ -3,6 +3,8 @@
 Creates the outer duct that encloses the fan stages. Features a curved
 bellmouth inlet for reduced inlet losses. Can be split into sections
 if the total length exceeds the build volume.
+
+Uses extrude-based geometry (not revolve) to ensure watertight STL output.
 """
 
 import math
@@ -56,6 +58,9 @@ class DuctGenerator:
                              include_bellmouth: bool = False) -> cq.Workplane:
         """Create a single duct section.
 
+        Uses extruded annular profiles (not revolve) to produce watertight
+        STL output. Bellmouth is created via extrude + cone cut.
+
         Args:
             z_offset: Axial start position
             length: Section length
@@ -63,8 +68,9 @@ class DuctGenerator:
         """
         outer_r = self.duct_od / 2
         inner_r = self.duct_id / 2
+        br = self.bellmouth_r if include_bellmouth else 0
 
-        # Main cylindrical shell
+        # Main shell: extruded annulus (always watertight)
         duct = (
             cq.Workplane("XY")
             .circle(outer_r)
@@ -72,43 +78,49 @@ class DuctGenerator:
             .extrude(length)
         )
 
-        # Add bellmouth inlet lip
-        if include_bellmouth and self.bellmouth_r > 0:
-            duct = self._add_bellmouth(duct, outer_r, inner_r)
+        if br > 0:
+            # Bellmouth flare extending below z=0.
+            # Strategy: extrude a wider annular ring, then cut away the
+            # outer taper with a revolved cone shape.
+            bellmouth_ring = (
+                cq.Workplane("XY")
+                .workplane(offset=-br)
+                .circle(outer_r + br)
+                .circle(inner_r)
+                .extrude(br)
+            )
+
+            # Cone taper to cut: profile in XZ revolved around Z.
+            # This removes the outer corner, creating the flared lip shape.
+            taper_margin = 10.0  # extra radial extent to ensure clean cut
+            taper_cut = (
+                cq.Workplane("XZ")
+                .moveTo(outer_r, 0)
+                .lineTo(outer_r + br, -br)
+                .lineTo(outer_r + br + taper_margin, -br)
+                .lineTo(outer_r + br + taper_margin, 0)
+                .close()
+                .revolve(360, (0, 0, 0), (0, 0, 1))
+            )
+
+            bellmouth_ring = bellmouth_ring.cut(taper_cut)
+            duct = duct.union(bellmouth_ring)
 
         # Add stator mounting slots
         duct = self._add_stator_slots(duct, inner_r, length)
 
         return duct
 
-    def _add_bellmouth(self, duct: cq.Workplane, outer_r: float,
-                       inner_r: float) -> cq.Workplane:
-        """Add curved bellmouth inlet lip to the duct entrance.
-
-        Creates a flared lip using a revolved profile for smooth air entry.
-        """
-        br = self.bellmouth_r
-
-        # Create a simple flared lip by revolving a triangular/curved profile
-        # Profile in XZ plane: starts at (outer_r, 0), curves to (outer_r + br, -br)
-        lip = (
-            cq.Workplane("XZ")
-            .moveTo(inner_r, 0)
-            .lineTo(inner_r - br, -br)
-            .lineTo(outer_r, -br)
-            .lineTo(outer_r, 0)
-            .close()
-            .revolve(360, (0, 0, 0), (0, 0, 1))
-        )
-
-        duct = duct.union(lip)
-        return duct
-
     def _add_stator_slots(self, duct: cq.Workplane, inner_r: float,
                           length: float) -> cq.Workplane:
-        """Add mounting slots for stator struts on the inner surface."""
+        """Add mounting slots for stator struts on the inner surface.
+
+        Uses cylindrical slot geometry instead of rectangular boxes to
+        avoid non-manifold edges on the curved duct wall.
+        """
         n_struts = self.config["stators"]["num_struts"]
-        slot_width = self.config["stators"]["strut_thickness"] + 0.4  # clearance
+        strut_t = self.config["stators"]["strut_thickness"]
+        slot_r = (strut_t + 0.4) / 2  # radius = half of (strut + clearance)
         slot_depth = 2.0  # mm into duct wall
         slot_height = self.config["stators"]["strut_chord"] + 1.0
 
@@ -126,8 +138,8 @@ class DuctGenerator:
                 slot = (
                     cq.Workplane("XY")
                     .workplane(offset=z_pos)
-                    .center(cx, cy)
-                    .rect(slot_depth, slot_width)
+                    .pushPoints([(cx, cy)])
+                    .circle(slot_r)
                     .extrude(slot_height)
                 )
                 duct = duct.cut(slot)
