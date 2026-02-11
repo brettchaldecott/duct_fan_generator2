@@ -1,0 +1,27 @@
+# Core CAD
+cadquery>=2.4
+cq_gears>=0.1
+
+# Numerics
+numpy>=1.24
+scipy>=1.10
+
+# Configuration
+pyyaml>=6.0
+
+# Magnetic coupling analysis
+magpylib>=4.0
+
+# Validation & Simulation
+trimesh[easy]>=3.20
+python-fcl>=0.7
+shapely>=2.0
+opentorsion>=0.1
+pint>=0.22
+
+# Testing
+pytest>=7.0
+pytest-timeout>=2.1
+
+# Units
+pint>=0.22

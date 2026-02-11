@@ -1,0 +1,120 @@
+motor:
+  shaft_diameter: 3.17        # mm (DC-522 equiv)
+  body_diameter: 36.0         # mm
+  body_length: 52.0           # mm
+  mounting_holes_pcd: 25.0    # mm (bolt circle diameter)
+  mounting_holes_diameter: 3.0
+  mounting_holes_count: 4
+  rpm: 12000
+  stall_torque: 0.15          # N-m (for system simulation)
+  no_load_rpm: 14000          # RPM (for linear torque-speed model)
+  voltage: 12.0               # V
+
+duct:
+  inner_diameter: 270.0       # mm
+  wall_thickness: 4.0         # mm
+  length_factor: 1.2          # multiplier of hub length
+  bellmouth_radius: 15.0      # mm
+
+gears:
+  module: 1.0                 # mm
+  sun_teeth: 20
+  planet_teeth: 10
+  ring_teeth: 40              # must equal sun + 2*planet
+  num_planets: 3
+  pressure_angle: 20.0        # degrees
+  gear_width: 8.0             # mm
+  backlash_compensation: 0.15 # mm
+  num_stages: 2
+  efficiency_per_stage: 0.95  # for system simulation
+
+magnetic_coupling:
+  stages:
+    - magnet_diameter: 8.0
+      magnet_thickness: 3.0
+      num_pole_pairs: 6
+      coupling_radius: 32.0
+    - magnet_diameter: 8.0
+      magnet_thickness: 5.0
+      num_pole_pairs: 5
+      coupling_radius: 32.0
+    - magnet_diameter: 10.0
+      magnet_thickness: 5.0
+      num_pole_pairs: 5
+      coupling_radius: 32.0
+  wall_thickness: 1.5         # mm
+  magnet_grade: "N52"
+  magnet_pocket_clearance: 0.2
+  required_safety_factor: 2.0
+
+blades:
+  stages:
+    - num_blades: 7
+      airfoil_root: "NACA6412"
+      airfoil_tip: "NACA4410"
+      design_cl: 0.5
+    - num_blades: 9
+      airfoil_root: "NACA6412"
+      airfoil_tip: "NACA4412"
+      design_cl: 0.7
+    - num_blades: 11
+      airfoil_root: "NACA6412"
+      airfoil_tip: "NACA4412"
+      design_cl: 0.9
+  tip_clearance: 1.5
+  num_radial_sections: 10
+
+hub:
+  wall_thickness: 3.0
+  bearing_press_fit_clearance: 0.1
+  split_plane: true
+
+stators:
+  num_struts: 5
+  strut_thickness: 3.0
+  strut_chord: 15.0
+  num_sets: 2
+
+bearings:
+  inner_shaft:
+    id: 3
+    od: 7
+    width: 3
+    name: "683ZZ"
+  middle_tube:
+    id: 10
+    od: 15
+    width: 4
+    name: "6700ZZ"
+  outer_tube:
+    id: 10
+    od: 19
+    width: 5
+    name: "6800ZZ"
+  blade_ring:
+    id: 10
+    od: 19
+    width: 5
+    name: "6800ZZ"
+
+materials:
+  blade:
+    name: "PLA CF"
+    density: 1250           # kg/m³
+    elastic_modulus: 4000   # MPa
+    tensile_strength: 50    # MPa
+    max_temp: 55            # °C
+  mechanical:
+    name: "PETG CF"
+    density: 1300
+    elastic_modulus: 3500
+    tensile_strength: 45
+    max_temp: 80
+
+print:
+  max_build_x: 300.0
+  max_build_y: 300.0
+  max_build_z: 300.0
+  nozzle_diameter: 0.4
+  layer_height: 0.2
+  min_wall_thickness: 0.8  # 2 × nozzle
