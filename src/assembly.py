@@ -19,6 +19,7 @@ from src.blade_generator import BladeRingGenerator
 from src.hub_generator import HubGenerator
 from src.stator_generator import StatorGenerator
 from src.duct_generator import DuctGenerator
+from src.gear_generator import GearGenerator
 from src.magnetic_coupling import MagneticCoupling
 
 from validation.structural_validator import StructuralValidator
@@ -242,6 +243,14 @@ class AssemblyGenerator:
         duct_sections = duct_gen.generate()
         for j, section in enumerate(duct_sections):
             meshes[f"duct_section_{j+1}"] = self._cq_to_trimesh(section)
+
+        # Gear stages
+        gear_gen = GearGenerator(self.config)
+        num_gear_stages = self.config["gears"].get("num_stages", 1)
+        for stage_idx in range(num_gear_stages):
+            gear_solids = gear_gen.generate_planetary_stage(stage_idx)
+            for name, solid in gear_solids.items():
+                meshes[name] = self._cq_to_trimesh(solid)
 
         return meshes
 

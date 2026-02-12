@@ -6,6 +6,8 @@ Usage:
     python main.py --generate --part blade_ring_1  # Generate single part
     python main.py --config custom.yaml --analyze  # Use custom config
     python main.py --validate-only              # Validate existing STLs
+    python main.py --view                       # Open interactive 3D viewer
+    python main.py --generate --view            # Generate then view
 """
 
 import argparse
@@ -46,10 +48,14 @@ def main():
         "--force", action="store_true",
         help="Generate STLs even if validation fails (use with caution)"
     )
+    parser.add_argument(
+        "--view", action="store_true",
+        help="Open interactive 3D viewer for STL files in output/"
+    )
 
     args = parser.parse_args()
 
-    if not any([args.analyze, args.generate, args.validate_only]):
+    if not any([args.analyze, args.generate, args.validate_only, args.view]):
         parser.print_help()
         sys.exit(1)
 
@@ -77,10 +83,12 @@ def main():
 
     if args.analyze:
         run_analysis(config, bemt_results)
-    elif args.generate:
+    if args.generate:
         run_generate(config, bemt_results, args.part, args.force)
-    elif args.validate_only:
+    if args.validate_only:
         run_validate_only(config)
+    if args.view:
+        run_view()
 
 
 def run_analysis(config, bemt_results):
@@ -187,6 +195,24 @@ def run_validate_only(config):
               f"{'watertight' if result.is_watertight else 'NOT watertight'}, "
               f"vol={result.volume_mm3:.0f}mm³, "
               f"bb={result.bounding_box[0]:.1f}x{result.bounding_box[1]:.1f}x{result.bounding_box[2]:.1f}mm")
+
+
+def run_view():
+    """Open interactive 3D viewer for generated STL files."""
+    from src.viewer import view_assembly
+
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    if not os.path.exists(output_dir):
+        print("No output directory found. Generate STLs first with --generate.")
+        sys.exit(1)
+
+    stl_files = [f for f in os.listdir(output_dir) if f.endswith(".stl")]
+    if not stl_files:
+        print("No STL files found in output/. Generate STLs first with --generate.")
+        sys.exit(1)
+
+    print(f"\nOpening viewer with {len(stl_files)} STL files...")
+    view_assembly(output_dir)
 
 
 if __name__ == "__main__":

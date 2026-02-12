@@ -1,7 +1,11 @@
 """Tests for gear generation and validation."""
 
 import math
+import os
+import tempfile
 import pytest
+import cadquery as cq
+import trimesh
 from src.gear_generator import GearGenerator
 from validation.gear_validator import GearValidator
 
@@ -156,3 +160,65 @@ class TestGearProfile:
         specs = gen.compute_gear_specs()
         profile = gen.generate_full_gear_profile(specs["sun"])
         assert profile.shape[0] > specs["sun"].teeth  # at least one point per tooth
+
+
+class TestGearSolid:
+    """Test 3D gear solid generation."""
+
+    def test_gear_solid_generates(self, default_config):
+        """Sun gear CadQuery solid creates without error."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        shaft_d = default_config["motor"]["shaft_diameter"]
+        solid = gen.generate_gear_solid(specs["sun"], bore_diameter=shaft_d)
+        assert solid is not None
+        # Verify it's a valid CadQuery Workplane with geometry
+        assert solid.val().isValid()
+
+    def test_planet_gear_solid(self, default_config):
+        """Planet gear solid generates."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["planet"], bore_diameter=5.0)
+        assert solid is not None
+        assert solid.val().isValid()
+
+    def test_ring_gear_solid(self, default_config):
+        """Ring gear (internal) solid generates."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["ring"])
+        assert solid is not None
+        assert solid.val().isValid()
+
+    def test_planetary_stage_generates(self, default_config):
+        """All gears (sun + 3 planets + ring) generated for a stage."""
+        gen = GearGenerator(default_config)
+        solids = gen.generate_planetary_stage(0)
+        # Should have: 1 sun + 3 planets + 1 ring = 5 parts
+        assert "gear_sun_stage_0" in solids
+        assert "gear_ring_stage_0" in solids
+        num_planets = default_config["gears"]["num_planets"]
+        for j in range(num_planets):
+            assert f"gear_planet_{j}_stage_0" in solids
+        assert len(solids) == 1 + num_planets + 1
+
+    def test_gear_solid_exportable(self, default_config):
+        """Gear solid can be exported to STL and loaded as trimesh."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["sun"], bore_diameter=5.0)
+
+        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            cq.exporters.export(solid, tmp_path, exportType="STL")
+            mesh = trimesh.load(tmp_path)
+            if isinstance(mesh, trimesh.Scene):
+                mesh = trimesh.util.concatenate(mesh.dump())
+            assert mesh.vertices.shape[0] > 0
+            assert mesh.faces.shape[0] > 0
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
