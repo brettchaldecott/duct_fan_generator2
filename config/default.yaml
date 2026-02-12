@@ -55,7 +55,7 @@ blades:
       airfoil_root: "NACA6412"
       airfoil_tip: "NACA4410"
       design_cl: 0.5
-    - num_blades: 9
+    - num_blades: 10
       airfoil_root: "NACA6412"
       airfoil_tip: "NACA4412"
       design_cl: 0.7

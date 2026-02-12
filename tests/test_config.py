@@ -123,8 +123,9 @@ class TestDerivedValues:
         """Blade span is positive and reasonable."""
         span = default_config["derived"]["blade_span"]
         assert span > 0
-        # Should be roughly (135 - tip_clearance) - hub_radius
-        assert span > 30  # at least 30mm span
+        # Blade root starts at ring_outer_r (external ring), tip at duct_r - clearance
+        # Span should be ~35mm with external ring architecture
+        assert span > 20  # at least 20mm span
         assert span < 150  # less than duct radius
 
     def test_hub_od_larger_than_motor(self, default_config):

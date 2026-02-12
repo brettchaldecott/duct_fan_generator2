@@ -22,6 +22,10 @@ PART_COLORS = {
     "gear_sun": (0.85, 0.65, 0.13),  # gold
     "gear_planet": (0.72, 0.53, 0.04),  # darker gold
     "gear_ring": (0.93, 0.79, 0.28),    # light gold
+    "carrier": (0.5, 0.8, 0.5),       # light green
+    "inner_shaft": (0.4, 0.4, 0.7),   # steel blue
+    "middle_tube": (0.5, 0.5, 0.8),   # lighter blue
+    "outer_tube": (0.6, 0.6, 0.9),    # lightest blue
 }
 
 
@@ -66,33 +70,56 @@ def view_assembly(stl_dir: str, window_size: Optional[tuple] = None):
     plotter = pv.Plotter(window_size=window_size or (1400, 900))
     plotter.set_background("white")
 
-    legend_entries = []
-
+    # Load all meshes upfront
+    loaded_parts = []
     for stl_path in stl_files:
         name = os.path.splitext(os.path.basename(stl_path))[0]
         mesh = pv.read(stl_path)
         part_type = _classify_part(name)
         color = PART_COLORS.get(part_type, (0.5, 0.5, 0.5))
-
         opacity = 0.3 if "duct" in name.lower() else 1.0
+        loaded_parts.append((name, mesh, color, opacity))
 
-        plotter.add_mesh(
-            mesh,
-            color=color,
-            opacity=opacity,
-            label=name,
-            smooth_shading=True,
+    legend_entries = []
+
+    def _add_parts(clip=False):
+        """Add all parts to the plotter, optionally clipped."""
+        plotter.clear()
+        legend_entries.clear()
+        for name, mesh, color, opacity in loaded_parts:
+            display_mesh = mesh
+            if clip:
+                # Clip at Y=0 plane, showing Y>0 half to reveal internals
+                display_mesh = mesh.clip('-y', invert=False)
+            plotter.add_mesh(
+                display_mesh,
+                color=color,
+                opacity=opacity,
+                label=name,
+                smooth_shading=True,
+            )
+            legend_entries.append([name, color])
+        plotter.add_legend(
+            legend_entries,
+            bcolor=(1, 1, 1),
+            face="circle",
+            size=(0.2, 0.3),
         )
-        legend_entries.append([name, color])
+        plotter.add_axes()
 
-    plotter.add_legend(
-        legend_entries,
-        bcolor=(1, 1, 1),
-        face="circle",
-        size=(0.2, 0.3),
-    )
+    # Initial display (no clip)
+    clip_state = {"active": False}
 
-    plotter.add_axes()
+    def toggle_clip():
+        """Toggle clip plane to reveal internal structure."""
+        clip_state["active"] = not clip_state["active"]
+        _add_parts(clip=clip_state["active"])
+        plotter.render()
+
+    _add_parts(clip=False)
+    plotter.add_key_event('c', toggle_clip)
+    plotter.add_text("Press 'C' for cross-section", position='lower_left', font_size=10)
+
     plotter.camera.zoom(0.8)
-    print(f"Displaying {len(stl_files)} parts. Close the window to exit.")
+    print(f"Displaying {len(stl_files)} parts. Press 'C' to toggle cross-section. Close window to exit.")
     plotter.show()

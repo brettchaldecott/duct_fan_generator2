@@ -110,6 +110,34 @@ class TestAxialLayout:
         assert positions["blade_ring_stage_3"] < positions["stator_exit"]
 
 
+class TestBladeRingClearance:
+    """Test blade ring to hub clearance checks."""
+
+    def test_blade_ring_clearance_checked(self, default_config):
+        """Blade ring clearance is checked for all stages."""
+        validator = AssemblyValidator(default_config)
+        results = validator.check_blade_ring_clearance()
+        num_stages = len(default_config["blades"]["stages"])
+        assert len(results) == num_stages
+
+    def test_blade_ring_clears_hub(self, default_config):
+        """Blade ring inner surface has air gap from hub outer surface."""
+        validator = AssemblyValidator(default_config)
+        results = validator.check_blade_ring_clearance()
+        for r in results:
+            assert r.passed, f"Blade ring clearance failed: {r.detail}"
+
+    def test_blade_ring_is_external(self, default_config):
+        """Blade ring inner radius is larger than hub outer radius."""
+        blade_ring_radii = default_config["derived"]["blade_ring_radii"]
+        per_stage_hub_radii = default_config["derived"]["per_stage_hub_radii"]
+        for i, ring_info in enumerate(blade_ring_radii):
+            assert ring_info["ring_inner_r"] > per_stage_hub_radii[i], (
+                f"Stage {i}: ring inner {ring_info['ring_inner_r']:.1f}mm "
+                f"should be > hub {per_stage_hub_radii[i]:.1f}mm"
+            )
+
+
 class TestOverallAssembly:
     """Test overall assembly validation."""
 

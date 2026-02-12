@@ -175,12 +175,12 @@ class HubGenerator:
             if stage_r <= base_r:
                 continue  # no protrusion needed
 
-            # Get blade stage Z position in hub-local coordinates
-            blade_z_global = self.positions.get(f"blade_ring_stage_{i+1}", None)
-            if blade_z_global is None:
+            # Get blade stage center Z in hub-local coordinates
+            blade_z_center = self.positions.get(f"blade_ring_stage_{i+1}", None)
+            if blade_z_center is None:
                 continue
 
-            blade_z_local = blade_z_global - self.hub_start_z - z_start_abs
+            blade_z_local = blade_z_center - self.blade_axial_width / 2 - self.hub_start_z - z_start_abs
             blade_z_end = blade_z_local + self.blade_axial_width
 
             # Clip to this half's range
@@ -211,12 +211,13 @@ class HubGenerator:
         num_stages = len(self.config["magnetic_coupling"]["stages"])
 
         for i in range(num_stages):
-            blade_z_global = self.positions.get(f"blade_ring_stage_{i+1}", None)
-            if blade_z_global is None:
+            blade_z_center = self.positions.get(f"blade_ring_stage_{i+1}", None)
+            if blade_z_center is None:
                 continue
 
-            blade_z_local = blade_z_global - self.hub_start_z - z_start_abs
-            blade_z_mid = blade_z_local + self.blade_axial_width / 2
+            # Position is the center of the blade ring
+            blade_z_local = blade_z_center - self.hub_start_z - z_start_abs
+            blade_z_mid = blade_z_local  # already the center
             half_len = z_end_abs - z_start_abs
 
             # Only add pockets if this stage is in this half
@@ -238,10 +239,10 @@ class HubGenerator:
                 cx = coupling_r * math.cos(angle)
                 cy = coupling_r * math.sin(angle)
 
-                # Pocket cut from outside, at blade stage z position
+                # Pocket cut from outside, centered at blade stage z position
                 pocket = (
                     cq.Workplane("XY")
-                    .workplane(offset=blade_z_local)
+                    .workplane(offset=blade_z_mid - pocket_depth / 2)
                     .center(cx, cy)
                     .circle(pocket_d / 2)
                     .extrude(pocket_depth)

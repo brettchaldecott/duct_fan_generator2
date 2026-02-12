@@ -206,10 +206,12 @@ def compute_derived(config: dict) -> None:
     hub_length = 0  # computed later from layout
 
     # --- Blade geometry bounds ---
-    blade_span = (duct["inner_diameter"] / 2 - blades["tip_clearance"]) - (hub_od / 2)
-    derived["blade_span"] = blade_span
+    # blade_hub_radius is the physical hub OD/2 (used for hub geometry)
+    # blade_root_radius will be updated after blade ring radii are computed (below)
     derived["blade_hub_radius"] = hub_od / 2
     derived["blade_tip_radius"] = duct["inner_diameter"] / 2 - blades["tip_clearance"]
+    blade_span = derived["blade_tip_radius"] - derived["blade_hub_radius"]
+    derived["blade_span"] = blade_span
 
     # --- Per-stage hub radii for compression ---
     compression_ratio = blades.get("compression_ratio", 1.0)
@@ -232,6 +234,37 @@ def compute_derived(config: dict) -> None:
     else:
         derived["per_stage_hub_radii"] = [hub_od / 2] * num_blade_stages
 
+    # --- External blade ring geometry ---
+    # Blade rings wrap OUTSIDE the hub housing with a radial air gap
+    # for magnetic coupling. Magnets sit at the hub wall / ring inner wall interface.
+    blade_ring_air_gap = 1.0  # mm radial gap for magnetic coupling
+    blade_ring_wall_thickness = hub_cfg["wall_thickness"]  # mm structural wall
+    blade_ring_radii = []
+    for i in range(num_blade_stages):
+        stage_hub_r = derived["per_stage_hub_radii"][i]
+        ring_inner_r = stage_hub_r + blade_ring_air_gap
+        ring_outer_r = ring_inner_r + blade_ring_wall_thickness
+        blade_ring_radii.append({
+            "ring_inner_r": ring_inner_r,
+            "ring_outer_r": ring_outer_r,
+        })
+    derived["blade_ring_radii"] = blade_ring_radii
+    derived["blade_ring_air_gap"] = blade_ring_air_gap
+    derived["blade_ring_wall_thickness"] = blade_ring_wall_thickness
+
+    # Derive coupling_radius per stage (at hub outer wall / blade ring interface)
+    coupling_stages = config["magnetic_coupling"]["stages"]
+    for i in range(min(num_blade_stages, len(coupling_stages))):
+        coupling_stages[i]["coupling_radius"] = derived["per_stage_hub_radii"][i]
+
+    # Update blade_hub_radius and blade_span to reflect external ring architecture
+    # Blades root at ring_outer_r, not at hub_od/2
+    if blade_ring_radii:
+        # Use the first stage ring outer as the reference blade root radius
+        max_ring_outer_r = max(br["ring_outer_r"] for br in blade_ring_radii)
+        derived["blade_hub_radius"] = max_ring_outer_r
+        derived["blade_span"] = derived["blade_tip_radius"] - max_ring_outer_r
+
     # --- Angular velocity for each stage (rad/s) ---
     derived["stage_omega"] = [rpm * 2 * math.pi / 60 for rpm in stage_rpms]
 
@@ -239,10 +272,22 @@ def compute_derived(config: dict) -> None:
     # Layout: bellmouth | stator_entry | blade_1 | gear_0 | blade_2 | gear_1 | blade_3 | stator_exit
     # Gear stages are placed between their corresponding blade stages.
     stator_chord = config["stators"]["strut_chord"]
-    blade_axial_width = max(bearings["blade_ring"]["width"] + 2, 10)  # derived from bearing
+
+    # blade_axial_width: must accommodate the full axial projection of
+    # the root airfoil (chord × sin(twist)) plus margin
+    max_root_chord = 30.0   # mm (conservative estimate for root chord)
+    max_twist_deg = 50.0    # degrees (conservative max root twist)
+    max_axial_extent = max_root_chord * math.sin(math.radians(max_twist_deg)) + 2  # margin
+    blade_axial_width = max(max_axial_extent, bearings["blade_ring"]["width"] + 2)
+    # Result: ~25mm instead of old 10mm
+
     gear_width = gears["gear_width"]
     carrier_width = 3.0  # carrier plate thickness
-    inter_stage_gap = 5.0
+
+    # inter_stage_gap: must clear blade overhang beyond the ring + stator chord
+    blade_overhang = blade_axial_width / 2  # blade extends this far beyond ring center
+    inter_stage_gap = max(blade_overhang + 3.0, 8.0)  # at least 3mm clearance beyond blade
+
     num_blade_stages = len(blades["stages"])
 
     positions = {}
@@ -251,7 +296,8 @@ def compute_derived(config: dict) -> None:
     z += stator_chord + inter_stage_gap
 
     for i in range(num_blade_stages):
-        positions[f"blade_ring_stage_{i+1}"] = z
+        # Position stores the CENTER of the blade ring (ring is centered at Z=0 locally)
+        positions[f"blade_ring_stage_{i+1}"] = z + blade_axial_width / 2
         z += blade_axial_width
 
         # Place gear stage between blade stages (gear i goes after blade i+1)
@@ -272,9 +318,10 @@ def compute_derived(config: dict) -> None:
     z += stator_chord
 
     # Hub spans from first blade stage to last, with margins
-    blade_start = positions["blade_ring_stage_1"]
-    blade_end_key = f"blade_ring_stage_{num_blade_stages}"
-    blade_end = positions[blade_end_key] + blade_axial_width
+    blade_1_center = positions["blade_ring_stage_1"]
+    blade_start = blade_1_center - blade_axial_width / 2
+    blade_n_center = positions[f"blade_ring_stage_{num_blade_stages}"]
+    blade_end = blade_n_center + blade_axial_width / 2
     hub_margin = hub_cfg["wall_thickness"] + 5  # wall + bearing space
     hub_start = blade_start - hub_margin
     hub_end = blade_end + hub_margin

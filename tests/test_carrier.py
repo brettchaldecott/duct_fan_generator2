@@ -63,8 +63,9 @@ class TestCarrierGeneration:
     def test_carrier_between_blade_stages(self, default_config):
         """Carrier positions are between blade stage positions."""
         positions = default_config["derived"]["part_positions"]
-        # Carrier 0 should be between blade stage 1 and blade stage 2
-        blade_1_end = positions["blade_ring_stage_1"] + default_config["derived"]["blade_axial_width"]
-        blade_2_start = positions["blade_ring_stage_2"]
+        blade_axial_width = default_config["derived"]["blade_axial_width"]
+        # Blade positions are centers; carrier 0 should be between blade 1 end and blade 2 start
+        blade_1_end = positions["blade_ring_stage_1"] + blade_axial_width / 2
+        blade_2_start = positions["blade_ring_stage_2"] - blade_axial_width / 2
         carrier_0 = positions["carrier_front_0"]
         assert blade_1_end <= carrier_0 <= blade_2_start

@@ -63,6 +63,9 @@ class AssemblyValidator:
         # Ring gear fits inside hub
         results.extend(self.check_ring_gear_fit())
 
+        # Blade ring clears hub outer wall
+        results.extend(self.check_blade_ring_clearance())
+
         # Collision detection (if meshes available)
         if meshes:
             results.extend(self.check_collisions(meshes))
@@ -195,8 +198,9 @@ class AssemblyValidator:
 
             if gear_key in positions and blade_before in positions and blade_after in positions:
                 gear_z = positions[gear_key]
-                blade_before_end = positions[blade_before] + blade_axial_width
-                blade_after_start = positions[blade_after]
+                # Blade positions are now centers, so end = center + half_width
+                blade_before_end = positions[blade_before] + blade_axial_width / 2
+                blade_after_start = positions[blade_after] - blade_axial_width / 2
 
                 is_between = blade_before_end <= gear_z <= blade_after_start
                 results.append(AssemblyCheck(
@@ -265,6 +269,31 @@ class AssemblyValidator:
                 passed=clearance >= 0.0,
                 detail=f"Ring outer wall R={ring_outer_wall_r:.1f}mm, hub inner R={hub_inner_r:.1f}mm, clearance={clearance:.1f}mm"
             ))
+
+        return results
+
+    def check_blade_ring_clearance(self) -> List[AssemblyCheck]:
+        """Check that blade ring inner surface clears hub outer surface (air gap)."""
+        results = []
+        blade_ring_radii = self.derived.get("blade_ring_radii", [])
+        per_stage_hub_radii = self.derived.get("per_stage_hub_radii", [])
+        air_gap = self.derived.get("blade_ring_air_gap", 1.0)
+
+        for i, ring_info in enumerate(blade_ring_radii):
+            if i < len(per_stage_hub_radii):
+                hub_r = per_stage_hub_radii[i]
+                ring_inner_r = ring_info["ring_inner_r"]
+                actual_gap = ring_inner_r - hub_r
+
+                results.append(AssemblyCheck(
+                    check_name="blade_ring_clearance",
+                    part_a=f"blade_ring_stage_{i+1}",
+                    part_b="hub",
+                    value=actual_gap,
+                    limit=air_gap,
+                    passed=actual_gap >= air_gap * 0.9,  # 90% tolerance
+                    detail=f"Ring inner R={ring_inner_r:.1f}mm, hub R={hub_r:.1f}mm, gap={actual_gap:.1f}mm (need {air_gap:.1f}mm)"
+                ))
 
         return results
 

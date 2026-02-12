@@ -25,12 +25,25 @@ class BladeRingGenerator:
         self.coupling = MagneticCoupling(config)
         self.bemt_stage = bemt_stage
 
-        # Use per-stage hub radius if available (compression annulus)
+        # Use per-stage hub radius (hub housing outer wall)
         per_stage = self.derived.get("per_stage_hub_radii", None)
         if per_stage and stage_index < len(per_stage):
             self.hub_r = per_stage[stage_index]
         else:
             self.hub_r = self.derived["blade_hub_radius"]  # mm
+
+        # External blade ring geometry: ring wraps OUTSIDE hub with air gap
+        blade_ring_radii = self.derived.get("blade_ring_radii", None)
+        if blade_ring_radii and stage_index < len(blade_ring_radii):
+            self.ring_inner_r = blade_ring_radii[stage_index]["ring_inner_r"]
+            self.ring_outer_r = blade_ring_radii[stage_index]["ring_outer_r"]
+        else:
+            # Fallback: ring at hub surface
+            air_gap = self.derived.get("blade_ring_air_gap", 1.0)
+            wall_t = config["hub"]["wall_thickness"]
+            self.ring_inner_r = self.hub_r + air_gap
+            self.ring_outer_r = self.ring_inner_r + wall_t
+
         self.tip_r = self.derived["blade_tip_radius"]   # mm
         self.n_blades = self.blade_cfg["num_blades"]
         self.direction = self.derived["stage_directions"][stage_index]
@@ -52,18 +65,19 @@ class BladeRingGenerator:
         return ring
 
     def _create_hub_ring(self) -> cq.Workplane:
-        """Create the central ring that holds the blades."""
-        bearing = self.config["bearings"]["blade_ring"]
-        clearance = self.config["hub"]["bearing_press_fit_clearance"]
+        """Create the blade ring that wraps OUTSIDE the hub housing.
 
-        ring_id = bearing["od"] + clearance  # bearing seat
-        ring_od = self.hub_r  # outer radius of hub ring
-        ring_height = max(bearing["width"] + 2, 10)  # mm
+        The ring inner surface faces the hub outer wall across an air gap
+        (magnetic coupling interface). Blades attach to the ring outer surface.
+        """
+        ring_height = self.derived.get("blade_axial_width", 25)
 
+        # Ring centered at Z=0 for symmetric axial positioning
         ring = (
             cq.Workplane("XY")
-            .circle(ring_od)
-            .circle(ring_id)
+            .workplane(offset=-ring_height / 2)
+            .circle(self.ring_outer_r)
+            .circle(self.ring_inner_r)
             .extrude(ring_height)
         )
 
@@ -80,16 +94,16 @@ class BladeRingGenerator:
         tip_cl = self.config["blades"]["tip_clearance"]  # mm
         max_r = duct_ir - tip_cl
 
-        # Radial stations — start slightly inside hub ring for clean boolean
-        BLADE_ROOT_OVERLAP = 1.0  # mm overlap into hub for watertight union
-        blade_root_r = self.hub_r - BLADE_ROOT_OVERLAP
+        # Radial stations — start slightly inside ring OD for clean boolean union
+        BLADE_ROOT_OVERLAP = 1.0  # mm overlap into ring for watertight union
+        blade_root_r = self.ring_outer_r - BLADE_ROOT_OVERLAP
         radii = np.linspace(blade_root_r, self.tip_r, n_sections)
 
         # Generate sections, skipping degenerate ones near tip
         MIN_CHORD = 3.0  # mm — minimum viable chord for loft
         sections = []
         for j, r in enumerate(radii):
-            frac = max(0.0, (r - self.hub_r) / (self.tip_r - self.hub_r))
+            frac = max(0.0, (r - self.ring_outer_r) / (self.tip_r - self.ring_outer_r))
 
             # Get chord and twist from BEMT if available
             if self.bemt_stage and j < len(self.bemt_stage.sections):
@@ -206,21 +220,25 @@ class BladeRingGenerator:
             return fallback
 
     def _add_magnet_pockets(self, ring: cq.Workplane) -> cq.Workplane:
-        """Subtract magnet pockets from the hub ring."""
+        """Subtract magnet pockets from the blade ring inner wall."""
         pocket_spec = self.coupling.magnet_pocket_specs(self.stage_index)
         n_pockets = pocket_spec["num_pockets"]
         pocket_d = pocket_spec["pocket_diameter"]
         pocket_depth = pocket_spec["pocket_depth"]
-        coupling_r = pocket_spec["coupling_radius"]
+        # Place pockets at ring inner wall (coupling interface)
+        coupling_r = self.ring_inner_r
         angular_spacing = pocket_spec["angular_spacing"]
+        ring_height = self.derived.get("blade_axial_width", 25)
 
         for i in range(n_pockets):
             angle = math.radians(i * angular_spacing)
             cx = coupling_r * math.cos(angle)
             cy = coupling_r * math.sin(angle)
 
+            # Pocket centered axially on the ring (ring is centered at Z=0)
             pocket = (
                 cq.Workplane("XY")
+                .workplane(offset=-pocket_depth / 2)
                 .center(cx, cy)
                 .circle(pocket_d / 2)
                 .extrude(pocket_depth)

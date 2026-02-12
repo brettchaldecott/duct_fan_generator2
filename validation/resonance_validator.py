@@ -64,11 +64,11 @@ class ResonanceValidator:
         blade_cfg = self.config["blades"]["stages"][stage_index]
         mat = self.config["materials"]["blade"]
 
-        # Blade span per stage (accounts for compression hub radius increase)
-        per_stage_radii = self.derived.get("per_stage_hub_radii", None)
+        # Blade span per stage — uses ring_outer_r (actual blade root)
+        blade_ring_radii = self.derived.get("blade_ring_radii", None)
         tip_r = self.derived["blade_tip_radius"]
-        if per_stage_radii and stage_index < len(per_stage_radii):
-            hub_r = per_stage_radii[stage_index]
+        if blade_ring_radii and stage_index < len(blade_ring_radii):
+            hub_r = blade_ring_radii[stage_index]["ring_outer_r"]
         else:
             hub_r = self.derived["blade_hub_radius"]
         span = (tip_r - hub_r) / 1000  # mm to m
