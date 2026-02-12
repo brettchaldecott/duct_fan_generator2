@@ -59,7 +59,7 @@ blades:
       airfoil_root: "NACA6412"
       airfoil_tip: "NACA4412"
       design_cl: 0.7
-    - num_blades: 13
+    - num_blades: 11
       airfoil_root: "NACA6412"
       airfoil_tip: "NACA4412"
       design_cl: 0.9
@@ -79,26 +79,26 @@ stators:
   num_sets: 2
 
 bearings:
-  inner_shaft:
-    id: 5
+  inner_shaft:      # Motor shaft in housing
+    id: 5           # motor shaft diameter
     od: 11
     width: 5
     name: "685ZZ"
-  middle_tube:
-    id: 10
-    od: 15
-    width: 4
-    name: "6700ZZ"
-  outer_tube:
-    id: 10
-    od: 19
+  middle_tube:      # Middle tube in housing
+    id: 15          # middle tube OD
+    od: 21
     width: 5
-    name: "6800ZZ"
-  blade_ring:
-    id: 10
-    od: 19
-    width: 5
-    name: "6800ZZ"
+    name: "6702ZZ"
+  outer_tube:       # Outer tube in housing
+    id: 25          # outer tube OD
+    od: 37
+    width: 7
+    name: "6805ZZ"
+  blade_ring:       # Blade ring on outer tube
+    id: 25
+    od: 37
+    width: 7
+    name: "6805ZZ"
 
 materials:
   blade:

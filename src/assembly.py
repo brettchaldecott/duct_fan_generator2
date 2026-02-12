@@ -21,6 +21,8 @@ from src.stator_generator import StatorGenerator
 from src.duct_generator import DuctGenerator
 from src.gear_generator import GearGenerator
 from src.magnetic_coupling import MagneticCoupling
+from src.carrier_generator import CarrierGenerator
+from src.shaft_generator import ShaftGenerator
 
 from validation.structural_validator import StructuralValidator
 from validation.resonance_validator import ResonanceValidator
@@ -252,6 +254,18 @@ class AssemblyGenerator:
             for name, solid in gear_solids.items():
                 meshes[name] = self._cq_to_trimesh(solid)
 
+        # Carrier plates
+        carrier_gen = CarrierGenerator(self.config)
+        carrier_solids = carrier_gen.generate_all_carriers()
+        for name, solid in carrier_solids.items():
+            meshes[name] = self._cq_to_trimesh(solid)
+
+        # Concentric shafts and tubes
+        shaft_gen = ShaftGenerator(self.config)
+        shaft_solids = shaft_gen.generate_all()
+        for name, solid in shaft_solids.items():
+            meshes[name] = self._cq_to_trimesh(solid)
+
         # Apply axial layout positioning
         meshes = self.position_meshes(meshes)
 
@@ -283,6 +297,15 @@ class AssemblyGenerator:
                     stage_num = key.split("_")[-1]
                     if f"stage_{stage_num}" in name:
                         return positions[key]
+
+        # Pattern matching for carrier parts: carrier_front_0 -> carrier_front_0
+        if name.startswith("carrier_"):
+            if name in positions:
+                return positions[name]
+
+        # Shafts and tubes positioned at hub start
+        if name in ("inner_shaft", "middle_tube", "outer_tube"):
+            return positions.get("hub_half_a", 0.0)
 
         # Pattern matching for duct sections
         if "duct" in name:

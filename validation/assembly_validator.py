@@ -54,6 +54,15 @@ class AssemblyValidator:
         # Blade tip clearance
         results.extend(self.check_blade_tip_clearance(meshes))
 
+        # Gear-blade stage alignment
+        results.extend(self.check_gear_blade_alignment())
+
+        # Concentric shaft clearances
+        results.extend(self.check_concentric_clearances())
+
+        # Ring gear fits inside hub
+        results.extend(self.check_ring_gear_fit())
+
         # Collision detection (if meshes available)
         if meshes:
             results.extend(self.check_collisions(meshes))
@@ -168,6 +177,93 @@ class AssemblyValidator:
                 limit=tip_clearance,
                 passed=gap >= tip_clearance,
                 detail=f"Config-based: tip R={tip_r:.1f}mm, duct IR={duct_r:.1f}mm, gap={gap:.1f}mm"
+            ))
+
+        return results
+
+    def check_gear_blade_alignment(self) -> List[AssemblyCheck]:
+        """Check that gear stages are positioned between their blade stages."""
+        results = []
+        positions = self.derived.get("part_positions", {})
+        blade_axial_width = self.derived.get("blade_axial_width", 10)
+        num_gear_stages = self.config["gears"].get("num_stages", 0)
+
+        for i in range(num_gear_stages):
+            gear_key = f"gear_stage_{i}"
+            blade_before = f"blade_ring_stage_{i+1}"
+            blade_after = f"blade_ring_stage_{i+2}"
+
+            if gear_key in positions and blade_before in positions and blade_after in positions:
+                gear_z = positions[gear_key]
+                blade_before_end = positions[blade_before] + blade_axial_width
+                blade_after_start = positions[blade_after]
+
+                is_between = blade_before_end <= gear_z <= blade_after_start
+                results.append(AssemblyCheck(
+                    check_name="gear_blade_alignment",
+                    part_a=gear_key,
+                    part_b=f"{blade_before} / {blade_after}",
+                    value=gear_z,
+                    limit=blade_after_start,
+                    passed=is_between,
+                    detail=f"Gear at Z={gear_z:.1f}, blade range [{blade_before_end:.1f}, {blade_after_start:.1f}]"
+                ))
+
+        return results
+
+    def check_concentric_clearances(self) -> List[AssemblyCheck]:
+        """Check concentric shaft/tube clearances."""
+        results = []
+        d = self.derived
+
+        # Inner shaft in middle tube
+        shaft_d = d.get("inner_shaft_diameter", 0)
+        mid_id = d.get("middle_tube_id", 0)
+        if shaft_d > 0 and mid_id > 0:
+            clearance = mid_id - shaft_d
+            results.append(AssemblyCheck(
+                check_name="concentric_clearance",
+                part_a="inner_shaft",
+                part_b="middle_tube",
+                value=clearance,
+                limit=1.0,
+                passed=clearance >= 1.0,
+                detail=f"Shaft OD={shaft_d}mm, tube ID={mid_id}mm, clearance={clearance:.1f}mm"
+            ))
+
+        # Middle tube in outer tube
+        mid_od = d.get("middle_tube_od", 0)
+        out_id = d.get("outer_tube_id", 0)
+        if mid_od > 0 and out_id > 0:
+            clearance = out_id - mid_od
+            results.append(AssemblyCheck(
+                check_name="concentric_clearance",
+                part_a="middle_tube",
+                part_b="outer_tube",
+                value=clearance,
+                limit=1.0,
+                passed=clearance >= 1.0,
+                detail=f"Middle OD={mid_od}mm, outer ID={out_id}mm, clearance={clearance:.1f}mm"
+            ))
+
+        return results
+
+    def check_ring_gear_fit(self) -> List[AssemblyCheck]:
+        """Check that ring gear fits inside hub housing."""
+        results = []
+        ring_outer_wall_r = self.derived.get("ring_outer_wall_radius", 0)
+        hub_inner_r = self.derived.get("hub_od", 0) / 2 - self.config["hub"]["wall_thickness"]
+
+        if ring_outer_wall_r > 0:
+            clearance = hub_inner_r - ring_outer_wall_r
+            results.append(AssemblyCheck(
+                check_name="ring_gear_fit",
+                part_a="ring_gear",
+                part_b="hub_interior",
+                value=clearance,
+                limit=0.0,
+                passed=clearance >= 0.0,
+                detail=f"Ring outer wall R={ring_outer_wall_r:.1f}mm, hub inner R={hub_inner_r:.1f}mm, clearance={clearance:.1f}mm"
             ))
 
         return results

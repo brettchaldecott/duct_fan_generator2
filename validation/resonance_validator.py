@@ -59,12 +59,19 @@ class ResonanceValidator:
         f_n = (λ²/2π) × √(EI / (ρAL⁴))
 
         For first mode of cantilever: λ₁ = 1.875
+        Uses per-stage hub radius for accurate span with compression.
         """
         blade_cfg = self.config["blades"]["stages"][stage_index]
         mat = self.config["materials"]["blade"]
 
-        # Blade span (cantilever length)
-        span = self.derived["blade_span"] / 1000  # mm to m
+        # Blade span per stage (accounts for compression hub radius increase)
+        per_stage_radii = self.derived.get("per_stage_hub_radii", None)
+        tip_r = self.derived["blade_tip_radius"]
+        if per_stage_radii and stage_index < len(per_stage_radii):
+            hub_r = per_stage_radii[stage_index]
+        else:
+            hub_r = self.derived["blade_hub_radius"]
+        span = (tip_r - hub_r) / 1000  # mm to m
 
         # Approximate blade cross-section as rectangular
         # Use mid-span chord estimate (average of typical BEMT results)

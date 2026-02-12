@@ -658,14 +658,22 @@ class GearGenerator:
         carrier_r = self.carrier_radius()
         angles = self.planet_positions()
 
+        derived = self.config.get("derived", {})
         motor_shaft_d = self.config["motor"]["shaft_diameter"]
-        # Planet bore: sized for a pin (half the motor shaft)
+        # Planet bore: sized for a pin (same as motor shaft diameter)
         planet_bore_d = motor_shaft_d
 
         solids = {}
 
-        # Sun gear at origin with motor shaft bore
-        sun = self.generate_gear_solid(specs["sun"], bore_diameter=motor_shaft_d)
+        # Sun gear bore depends on stage:
+        #   Stage 0: motor shaft (inner shaft) — 5mm
+        #   Stage 1+: middle tube OD — 15mm
+        if stage_index == 0:
+            sun_bore = motor_shaft_d
+        else:
+            sun_bore = derived.get("middle_tube_od", motor_shaft_d)
+
+        sun = self.generate_gear_solid(specs["sun"], bore_diameter=sun_bore)
         solids[f"gear_sun_stage_{stage_index}"] = sun
 
         # Planet gears translated to carrier radius at evenly spaced angles

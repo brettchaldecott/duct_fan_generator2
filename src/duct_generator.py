@@ -117,6 +117,7 @@ class DuctGenerator:
 
         Uses cylindrical slot geometry instead of rectangular boxes to
         avoid non-manifold edges on the curved duct wall.
+        Slot positions are derived from the axial layout system.
         """
         n_struts = self.config["stators"]["num_struts"]
         strut_t = self.config["stators"]["strut_thickness"]
@@ -124,9 +125,14 @@ class DuctGenerator:
         slot_depth = 2.0  # mm into duct wall
         slot_height = self.config["stators"]["strut_chord"] + 1.0
 
-        # Stator positions: entry and exit
-        for z_pos in [10, length - 10 - slot_height]:
-            if z_pos < 0:
+        # Get stator positions from layout and convert to duct-local Z
+        positions = self.derived.get("part_positions", {})
+        duct_z_offset = positions.get("duct_section_1", 0)
+        entry_z = positions.get("stator_entry", 10) - duct_z_offset
+        exit_z = positions.get("stator_exit", length - 10 - slot_height) - duct_z_offset
+
+        for z_pos in [entry_z, exit_z]:
+            if z_pos < 0 or z_pos + slot_height > length:
                 continue
             for i in range(n_struts):
                 angle = 360.0 * i / n_struts

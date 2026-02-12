@@ -72,6 +72,11 @@ def validate_config(config: dict) -> None:
             f"Inner shaft bearing OD ({inner_od}) must be less than "
             f"middle tube bearing OD ({middle_od})"
         )
+    if middle_od >= outer_od:
+        errors.append(
+            f"Middle tube bearing OD ({middle_od}) must be less than "
+            f"outer tube bearing OD ({outer_od})"
+        )
 
     # --- Motor fits inside hub ---
     motor_diam = config.get("motor", {}).get("body_diameter", 0)
@@ -187,24 +192,18 @@ def compute_derived(config: dict) -> None:
     derived["stage_directions"] = stage_directions
 
     # --- Hub geometry ---
-    # Hub OD must fit motor + gears + bearings + walls
+    # Hub OD must fit ring gear outer wall + hub walls
     motor_od = motor["body_diameter"]
-    # Hub OD based on ring gear + wall thickness
-    hub_od = ring_pd + 2 * module + 2 * hub_cfg["wall_thickness"]  # ring OD + walls
+    # Ring gear outer wall radius = (root_diameter/2) + 2*module
+    ring_root_d = ring_pd + 2 * 1.25 * module  # internal gear root is larger
+    ring_outer_wall_d = ring_root_d + 4 * module  # wall beyond root
+    hub_od = ring_outer_wall_d + 2 * hub_cfg["wall_thickness"]
     hub_od = max(hub_od, motor_od + 2 * hub_cfg["wall_thickness"])
     derived["hub_od"] = hub_od
 
-    # Hub length: motor + gear stages + coupling zones
-    motor_len = motor["body_length"]
-    gear_len = gears["gear_width"] * num_gear_stages
-    coupling_zones = len(blades["stages"]) * 10  # ~10mm per coupling zone
-    hub_length = motor_len + gear_len + coupling_zones + 20  # 20mm for bearings/spacing
-    derived["hub_length"] = hub_length
-
-    # --- Duct geometry ---
-    duct_length = hub_length * duct["length_factor"]
-    derived["duct_length"] = duct_length
-    derived["duct_od"] = duct["inner_diameter"] + 2 * duct["wall_thickness"]
+    # Hub length and duct length are computed after axial layout (below).
+    # Placeholder — will be set by layout computation.
+    hub_length = 0  # computed later from layout
 
     # --- Blade geometry bounds ---
     blade_span = (duct["inner_diameter"] / 2 - blades["tip_clearance"]) - (hub_od / 2)
@@ -236,22 +235,13 @@ def compute_derived(config: dict) -> None:
     # --- Angular velocity for each stage (rad/s) ---
     derived["stage_omega"] = [rpm * 2 * math.pi / 60 for rpm in stage_rpms]
 
-    # --- Build volume check ---
-    max_dim = max(
-        derived["duct_od"],
-        duct_length,
-    )
-    derived["max_part_dimension"] = max_dim
-    derived["fits_build_volume"] = (
-        derived["duct_od"] <= config["print"]["max_build_x"]
-        and derived["duct_od"] <= config["print"]["max_build_y"]
-        and duct_length <= config["print"]["max_build_z"]
-    )
-
     # --- Axial layout (Z positions in mm) ---
-    # Layout: bellmouth | stator_entry | stage_1 | stage_2 | ... | stator_exit
+    # Layout: bellmouth | stator_entry | blade_1 | gear_0 | blade_2 | gear_1 | blade_3 | stator_exit
+    # Gear stages are placed between their corresponding blade stages.
     stator_chord = config["stators"]["strut_chord"]
-    blade_axial_width = 12.0  # estimated axial extent per blade ring
+    blade_axial_width = max(bearings["blade_ring"]["width"] + 2, 10)  # derived from bearing
+    gear_width = gears["gear_width"]
+    carrier_width = 3.0  # carrier plate thickness
     inter_stage_gap = 5.0
     num_blade_stages = len(blades["stages"])
 
@@ -262,29 +252,69 @@ def compute_derived(config: dict) -> None:
 
     for i in range(num_blade_stages):
         positions[f"blade_ring_stage_{i+1}"] = z
-        z += blade_axial_width + inter_stage_gap
+        z += blade_axial_width
 
+        # Place gear stage between blade stages (gear i goes after blade i+1)
+        if i < num_gear_stages:
+            z += inter_stage_gap
+            positions[f"carrier_front_{i}"] = z
+            z += carrier_width
+            positions[f"gear_stage_{i}"] = z
+            z += gear_width
+            positions[f"carrier_back_{i}"] = z
+            z += carrier_width
+
+        if i < num_blade_stages - 1:
+            z += inter_stage_gap
+
+    z += inter_stage_gap
     positions["stator_exit"] = z
     z += stator_chord
 
-    # Hub centered on blade stages
+    # Hub spans from first blade stage to last, with margins
     blade_start = positions["blade_ring_stage_1"]
-    blade_end = positions[f"blade_ring_stage_{num_blade_stages}"] + blade_axial_width
-    hub_center_z = (blade_start + blade_end) / 2
-    positions["hub_half_a"] = hub_center_z - hub_length / 2
+    blade_end_key = f"blade_ring_stage_{num_blade_stages}"
+    blade_end = positions[blade_end_key] + blade_axial_width
+    hub_margin = hub_cfg["wall_thickness"] + 5  # wall + bearing space
+    hub_start = blade_start - hub_margin
+    hub_end = blade_end + hub_margin
+    hub_length = hub_end - hub_start
+    derived["hub_length"] = hub_length
+
+    hub_center_z = (hub_start + hub_end) / 2
+    positions["hub_half_a"] = hub_start
     positions["hub_half_b"] = hub_center_z
 
     # Duct covers the full assembly length plus bellmouth
     bellmouth_r = duct.get("bellmouth_radius", 15.0)
     positions["duct_section_1"] = -bellmouth_r
 
-    # Gear stages inside hub
-    for i in range(num_gear_stages):
-        gear_z = positions["hub_half_a"] + hub_cfg["wall_thickness"] + i * gears["gear_width"]
-        positions[f"gear_stage_{i}"] = gear_z
+    # --- Duct geometry (derived from layout) ---
+    duct_length = z + bellmouth_r + 5  # total assembly length + bellmouth + margin
+    duct_length = max(duct_length, hub_length * duct["length_factor"])
+    derived["duct_length"] = duct_length
+    derived["duct_od"] = duct["inner_diameter"] + 2 * duct["wall_thickness"]
+
+    # --- Build volume check ---
+    max_dim = max(derived["duct_od"], duct_length)
+    derived["max_part_dimension"] = max_dim
+    derived["fits_build_volume"] = (
+        derived["duct_od"] <= config["print"]["max_build_x"]
+        and derived["duct_od"] <= config["print"]["max_build_y"]
+        and duct_length <= config["print"]["max_build_z"]
+    )
 
     derived["part_positions"] = positions
     derived["total_axial_length"] = z
+    derived["blade_axial_width"] = blade_axial_width
+
+    # --- Shaft/tube dimensions for concentric architecture ---
+    derived["inner_shaft_diameter"] = motor["shaft_diameter"]  # 5mm
+    derived["middle_tube_od"] = bearings["middle_tube"]["id"]  # 15mm
+    derived["middle_tube_id"] = motor["shaft_diameter"] + 3.0  # clearance over shaft
+    derived["outer_tube_od"] = bearings["outer_tube"]["id"]  # 25mm
+    derived["outer_tube_id"] = derived["middle_tube_od"] + 2.0  # clearance over middle tube
+    derived["ring_outer_wall_radius"] = ring_outer_wall_d / 2
 
     config["derived"] = derived
 
