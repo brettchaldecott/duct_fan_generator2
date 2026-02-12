@@ -27,6 +27,8 @@ gears:
   backlash_compensation: 0.30 # mm
   num_stages: 2
   efficiency_per_stage: 0.95  # for system simulation
+  helix_angle: 30.0           # degrees (0 = spur, >0 = double helical/herringbone)
+  herringbone_gap: 1.0        # mm gap between helical halves
 
 magnetic_coupling:
   stages:
@@ -63,6 +65,7 @@ blades:
       design_cl: 0.9
   tip_clearance: 1.5
   num_radial_sections: 10
+  compression_ratio: 1.15     # total pressure ratio across all stages (1.0 = no compression)
 
 hub:
   wall_thickness: 3.0

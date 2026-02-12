@@ -25,7 +25,12 @@ class BladeRingGenerator:
         self.coupling = MagneticCoupling(config)
         self.bemt_stage = bemt_stage
 
-        self.hub_r = self.derived["blade_hub_radius"]  # mm
+        # Use per-stage hub radius if available (compression annulus)
+        per_stage = self.derived.get("per_stage_hub_radii", None)
+        if per_stage and stage_index < len(per_stage):
+            self.hub_r = per_stage[stage_index]
+        else:
+            self.hub_r = self.derived["blade_hub_radius"]  # mm
         self.tip_r = self.derived["blade_tip_radius"]   # mm
         self.n_blades = self.blade_cfg["num_blades"]
         self.direction = self.derived["stage_directions"][stage_index]
@@ -70,13 +75,21 @@ class BladeRingGenerator:
         root_designation = self.blade_cfg["airfoil_root"]
         tip_designation = self.blade_cfg["airfoil_tip"]
 
-        # Radial stations
-        radii = np.linspace(self.hub_r, self.tip_r, n_sections)
+        # Duct constraint: max radial reach for mid-chord centered blade
+        duct_ir = self.config["duct"]["inner_diameter"] / 2  # mm
+        tip_cl = self.config["blades"]["tip_clearance"]  # mm
+        max_r = duct_ir - tip_cl
 
-        # Generate sections
+        # Radial stations — start slightly inside hub ring for clean boolean
+        BLADE_ROOT_OVERLAP = 1.0  # mm overlap into hub for watertight union
+        blade_root_r = self.hub_r - BLADE_ROOT_OVERLAP
+        radii = np.linspace(blade_root_r, self.tip_r, n_sections)
+
+        # Generate sections, skipping degenerate ones near tip
+        MIN_CHORD = 3.0  # mm — minimum viable chord for loft
         sections = []
         for j, r in enumerate(radii):
-            frac = (r - self.hub_r) / (self.tip_r - self.hub_r)
+            frac = max(0.0, (r - self.hub_r) / (self.tip_r - self.hub_r))
 
             # Get chord and twist from BEMT if available
             if self.bemt_stage and j < len(self.bemt_stage.sections):
@@ -88,8 +101,16 @@ class BladeRingGenerator:
                 chord = 30 * (1 - 0.4 * frac)  # taper from 30mm to 18mm
                 twist = 45 * (1 - frac) + 10 * frac  # 45° root to 10° tip
 
-            chord = max(chord, 5)  # minimum 5mm
-            chord = min(chord, 80)  # maximum 80mm
+            # Duct-aware chord clamp: with mid-chord centering, max tangential
+            # extent is chord/2, giving radial reach sqrt(r² + (chord/2)²).
+            max_chord_at_r = 2 * math.sqrt(max(max_r**2 - r**2, 0))
+            chord = min(chord, max_chord_at_r)
+            chord = min(chord, 80)  # absolute maximum 80mm
+            chord = max(chord, MIN_CHORD)
+
+            # Skip this section if chord exceeds duct constraint at minimum
+            if max_chord_at_r < MIN_CHORD:
+                continue
 
             # Generate blended airfoil profile
             n_pts = 30
@@ -108,47 +129,81 @@ class BladeRingGenerator:
 
         return blade
 
+    @staticmethod
+    def _dedup_points(points, tol=1e-4):
+        """Remove consecutive duplicate 2D points within tolerance."""
+        if not points:
+            return points
+        result = [points[0]]
+        for pt in points[1:]:
+            dx = pt[0] - result[-1][0]
+            dy = pt[1] - result[-1][1]
+            if (dx * dx + dy * dy) > tol * tol:
+                result.append(pt)
+        # Remove last if same as first (close() will handle closure)
+        if len(result) > 2:
+            dx = result[-1][0] - result[0][0]
+            dy = result[-1][1] - result[0][1]
+            if (dx * dx + dy * dy) <= tol * tol:
+                result = result[:-1]
+        return result
+
     def _loft_blade(self, sections) -> cq.Workplane:
-        """Loft blade from airfoil sections at radial stations."""
-        # Create wire sections at each radius
-        wires = []
+        """Loft blade from airfoil sections at radial stations.
+
+        Creates CadQuery wires on YZ workplanes offset along X (radial
+        direction), then lofts through all wires to form a twisted blade.
+        """
+        # Pre-process all sections: center, rotate, collect 2D points
+        wire_data = []
         for r, profile, twist in sections:
-            # Rotate profile by twist angle, position at radius r
             twist_rad = math.radians(twist)
             cos_t = math.cos(twist_rad)
             sin_t = math.sin(twist_rad)
 
-            # Rotate 2D profile by twist
-            rotated = np.column_stack([
-                profile[:, 0] * cos_t - profile[:, 1] * sin_t,
-                profile[:, 0] * sin_t + profile[:, 1] * cos_t,
-            ])
+            # Center airfoil at mid-chord for minimum radial overshoot
+            chord = np.max(profile[:, 0]) - np.min(profile[:, 0])
+            centered = profile.copy()
+            centered[:, 0] -= chord * 0.5
 
-            # Position at radius r along X axis (blade extends radially)
-            # Profile is in XY plane, translated to radius r in X
-            pts_3d = [(float(rotated[k, 0]) + r, float(rotated[k, 1]), 0.0)
-                      for k in range(len(rotated) - 1)]  # skip closing point
+            # Rotate 2D profile by twist angle
+            rotated_y = centered[:, 0] * cos_t - centered[:, 1] * sin_t
+            rotated_z = centered[:, 0] * sin_t + centered[:, 1] * cos_t
 
-            wire = cq.Workplane("XY").moveTo(pts_3d[0][0], pts_3d[0][1])
-            for pt in pts_3d[1:]:
-                wire = wire.lineTo(pt[0], pt[1])
-            wire = wire.close()
-            wires.append(wire)
+            # Build 2D points (skip closing point — close() will handle it)
+            pts = [(float(rotated_y[k]), float(rotated_z[k]))
+                   for k in range(len(rotated_y) - 1)]
+            pts = self._dedup_points(pts)
+            wire_data.append((r, pts))
 
-        # Loft through all sections
-        if len(wires) >= 2:
-            result = wires[0]
-            # Use simple extrude from first section as fallback
-            # CadQuery loft requires workplane manipulation
-            # Simplified: extrude first section along Z, then position
-            first_section = wires[0]
-            blade_height = 3.0  # mm thickness
-            result = first_section.extrude(blade_height)
-        else:
-            # Single section - extrude
-            result = wires[0].extrude(3.0)
+        # Build CadQuery loft through all sections
+        try:
+            result = cq.Workplane("YZ")
+            for i, (r, pts) in enumerate(wire_data):
+                if i == 0:
+                    result = result.workplane(offset=r)
+                else:
+                    dr = r - wire_data[i - 1][0]
+                    result = result.workplane(offset=dr)
 
-        return result
+                result = result.moveTo(pts[0][0], pts[0][1])
+                for pt in pts[1:]:
+                    result = result.lineTo(pt[0], pt[1])
+                result = result.close()
+
+            result = result.loft(ruled=True)
+            return result
+
+        except Exception:
+            # Fallback: extrude root section across full blade span
+            span = sections[-1][0] - sections[0][0]
+            r0, pts0 = wire_data[0]
+            fallback = cq.Workplane("YZ").workplane(offset=r0)
+            fallback = fallback.moveTo(pts0[0][0], pts0[0][1])
+            for pt in pts0[1:]:
+                fallback = fallback.lineTo(pt[0], pt[1])
+            fallback = fallback.close().extrude(span)
+            return fallback
 
     def _add_magnet_pockets(self, ring: cq.Workplane) -> cq.Workplane:
         """Subtract magnet pockets from the hub ring."""

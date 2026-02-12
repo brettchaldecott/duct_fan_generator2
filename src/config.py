@@ -212,6 +212,27 @@ def compute_derived(config: dict) -> None:
     derived["blade_hub_radius"] = hub_od / 2
     derived["blade_tip_radius"] = duct["inner_diameter"] / 2 - blades["tip_clearance"]
 
+    # --- Per-stage hub radii for compression ---
+    compression_ratio = blades.get("compression_ratio", 1.0)
+    num_blade_stages = len(blades["stages"])
+    tip_r = duct["inner_diameter"] / 2 - blades["tip_clearance"]
+
+    if compression_ratio > 1.0 and num_blade_stages > 0:
+        gamma = 1.4  # air
+        per_stage_hub_radii = []
+        area_current = math.pi * (tip_r**2 - (hub_od / 2)**2)
+        pr_per_stage = compression_ratio ** (1.0 / num_blade_stages)
+
+        for i in range(num_blade_stages):
+            hub_r_i = math.sqrt(max(tip_r**2 - area_current / math.pi, (hub_od / 2)**2))
+            per_stage_hub_radii.append(hub_r_i)
+            # Reduce annulus area for next stage (isentropic compression)
+            area_current /= pr_per_stage ** (1.0 / gamma)
+
+        derived["per_stage_hub_radii"] = per_stage_hub_radii
+    else:
+        derived["per_stage_hub_radii"] = [hub_od / 2] * num_blade_stages
+
     # --- Angular velocity for each stage (rad/s) ---
     derived["stage_omega"] = [rpm * 2 * math.pi / 60 for rpm in stage_rpms]
 
@@ -226,6 +247,44 @@ def compute_derived(config: dict) -> None:
         and derived["duct_od"] <= config["print"]["max_build_y"]
         and duct_length <= config["print"]["max_build_z"]
     )
+
+    # --- Axial layout (Z positions in mm) ---
+    # Layout: bellmouth | stator_entry | stage_1 | stage_2 | ... | stator_exit
+    stator_chord = config["stators"]["strut_chord"]
+    blade_axial_width = 12.0  # estimated axial extent per blade ring
+    inter_stage_gap = 5.0
+    num_blade_stages = len(blades["stages"])
+
+    positions = {}
+    z = 0.0
+    positions["stator_entry"] = z
+    z += stator_chord + inter_stage_gap
+
+    for i in range(num_blade_stages):
+        positions[f"blade_ring_stage_{i+1}"] = z
+        z += blade_axial_width + inter_stage_gap
+
+    positions["stator_exit"] = z
+    z += stator_chord
+
+    # Hub centered on blade stages
+    blade_start = positions["blade_ring_stage_1"]
+    blade_end = positions[f"blade_ring_stage_{num_blade_stages}"] + blade_axial_width
+    hub_center_z = (blade_start + blade_end) / 2
+    positions["hub_half_a"] = hub_center_z - hub_length / 2
+    positions["hub_half_b"] = hub_center_z
+
+    # Duct covers the full assembly length plus bellmouth
+    bellmouth_r = duct.get("bellmouth_radius", 15.0)
+    positions["duct_section_1"] = -bellmouth_r
+
+    # Gear stages inside hub
+    for i in range(num_gear_stages):
+        gear_z = positions["hub_half_a"] + hub_cfg["wall_thickness"] + i * gears["gear_width"]
+        positions[f"gear_stage_{i}"] = gear_z
+
+    derived["part_positions"] = positions
+    derived["total_axial_length"] = z
 
     config["derived"] = derived
 

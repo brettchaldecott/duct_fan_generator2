@@ -252,7 +252,45 @@ class AssemblyGenerator:
             for name, solid in gear_solids.items():
                 meshes[name] = self._cq_to_trimesh(solid)
 
+        # Apply axial layout positioning
+        meshes = self.position_meshes(meshes)
+
         return meshes
+
+    def position_meshes(self, meshes: Dict[str, trimesh.Trimesh]) -> Dict[str, trimesh.Trimesh]:
+        """Translate meshes to their axial (Z) positions from config layout."""
+        positions = self.derived.get("part_positions", {})
+        positioned = {}
+        for name, mesh in meshes.items():
+            z_offset = self._find_position(name, positions)
+            if z_offset != 0:
+                mesh = mesh.copy()
+                mesh.apply_translation([0, 0, z_offset])
+            positioned[name] = mesh
+        return positioned
+
+    @staticmethod
+    def _find_position(name: str, positions: dict) -> float:
+        """Find the Z position for a named part from the layout dict."""
+        # Direct match
+        if name in positions:
+            return positions[name]
+
+        # Pattern matching for gear parts: gear_sun_stage_0 -> gear_stage_0
+        if name.startswith("gear_"):
+            for key in positions:
+                if key.startswith("gear_stage_"):
+                    stage_num = key.split("_")[-1]
+                    if f"stage_{stage_num}" in name:
+                        return positions[key]
+
+        # Pattern matching for duct sections
+        if "duct" in name:
+            for key in positions:
+                if "duct" in key:
+                    return positions[key]
+
+        return 0.0
 
     def generate_and_export(self, parts: Optional[List[str]] = None) -> dict:
         """Generate geometry, validate, and export STLs (Step 2: --generate).

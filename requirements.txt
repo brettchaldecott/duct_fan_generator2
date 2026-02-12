@@ -20,6 +20,8 @@ pint>=0.22
 
 # Visualization
 pyvista>=0.43
+PySide6>=6.6
+pyvistaqt>=0.11
 
 # Testing
 pytest>=7.0

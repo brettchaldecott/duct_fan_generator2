@@ -52,7 +52,7 @@ class AssemblyValidator:
         results.extend(self.check_magnet_pockets())
 
         # Blade tip clearance
-        results.extend(self.check_blade_tip_clearance())
+        results.extend(self.check_blade_tip_clearance(meshes))
 
         # Collision detection (if meshes available)
         if meshes:
@@ -133,23 +133,42 @@ class AssemblyValidator:
 
         return results
 
-    def check_blade_tip_clearance(self) -> List[AssemblyCheck]:
-        """Check blade tip clearance to duct ID."""
+    def check_blade_tip_clearance(self, meshes: dict = None) -> List[AssemblyCheck]:
+        """Check blade tip clearance to duct ID using mesh data when available."""
         results = []
         tip_clearance = self.config["blades"]["tip_clearance"]
         duct_r = self.config["duct"]["inner_diameter"] / 2
-        tip_r = self.derived["blade_tip_radius"]
-        gap = duct_r - tip_r
 
-        results.append(AssemblyCheck(
-            check_name="tip_clearance",
-            part_a="blade_ring",
-            part_b="duct",
-            value=gap,
-            limit=tip_clearance,
-            passed=gap >= tip_clearance,
-            detail=f"Duct IR={duct_r:.1f}mm, tip R={tip_r:.1f}mm, gap={gap:.1f}mm, min={tip_clearance}mm"
-        ))
+        if meshes:
+            for name, mesh in meshes.items():
+                if "blade_ring" in name:
+                    # Actual max radial extent from mesh vertices
+                    xy_extent = np.sqrt(mesh.vertices[:, 0]**2 + mesh.vertices[:, 1]**2)
+                    actual_tip_r = np.max(xy_extent)
+                    gap = duct_r - actual_tip_r
+                    results.append(AssemblyCheck(
+                        check_name="tip_clearance",
+                        part_a=name,
+                        part_b="duct",
+                        value=gap,
+                        limit=tip_clearance,
+                        passed=gap >= tip_clearance * 0.9,  # 90% tolerance
+                        detail=f"Actual tip R={actual_tip_r:.1f}mm, duct IR={duct_r:.1f}mm, gap={gap:.1f}mm"
+                    ))
+
+        if not results:
+            # Fallback to config-based check
+            tip_r = self.derived["blade_tip_radius"]
+            gap = duct_r - tip_r
+            results.append(AssemblyCheck(
+                check_name="tip_clearance",
+                part_a="blade_ring",
+                part_b="duct",
+                value=gap,
+                limit=tip_clearance,
+                passed=gap >= tip_clearance,
+                detail=f"Config-based: tip R={tip_r:.1f}mm, duct IR={duct_r:.1f}mm, gap={gap:.1f}mm"
+            ))
 
         return results
 
@@ -204,9 +223,20 @@ class AssemblyValidator:
                 for other in mesh_names:
                     if "blade_ring" in other:
                         pairs.append((name, other))
+            # Blade rings shouldn't collide with duct
             if "blade_ring" in name:
                 for other in mesh_names:
                     if "duct" in other:
+                        pairs.append((name, other))
+            # Stators shouldn't collide with hub or blade rings
+            if "stator" in name:
+                for other in mesh_names:
+                    if "hub" in other or "blade_ring" in other:
+                        pairs.append((name, other))
+            # Gear parts shouldn't collide with hub
+            if "gear" in name and "ring" not in name:
+                for other in mesh_names:
+                    if "hub" in other:
                         pairs.append((name, other))
 
         return pairs

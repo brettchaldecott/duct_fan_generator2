@@ -1,6 +1,7 @@
 """Tests for assembly validation."""
 
 import pytest
+import numpy as np
 from validation.assembly_validator import AssemblyValidator
 
 
@@ -43,19 +44,35 @@ class TestMagnetPockets:
 class TestBladeTipClearance:
     """Test blade tip clearance checks."""
 
-    def test_tip_clearance_met(self, default_config):
-        """Blade tip clearance >= configured minimum."""
+    def test_tip_clearance_met_no_meshes(self, default_config):
+        """Blade tip clearance >= configured minimum (config-based fallback)."""
         validator = AssemblyValidator(default_config)
         results = validator.check_blade_tip_clearance()
         assert len(results) == 1
         assert results[0].passed, f"Tip clearance failed: {results[0].detail}"
 
-    def test_tip_clearance_equals_configured(self, default_config):
-        """Tip clearance exactly equals the configured value."""
+    def test_tip_clearance_config_fallback(self, default_config):
+        """Config-based fallback equals configured tip clearance."""
         validator = AssemblyValidator(default_config)
         results = validator.check_blade_tip_clearance()
         expected = default_config["blades"]["tip_clearance"]
         assert results[0].value == pytest.approx(expected, abs=0.01)
+
+    def test_tip_clearance_with_mesh(self, default_config):
+        """Tip clearance check uses actual mesh extents when provided."""
+        import trimesh
+        validator = AssemblyValidator(default_config)
+        duct_r = default_config["duct"]["inner_diameter"] / 2
+
+        # Create a cylindrical blade ring mesh at a known radius
+        blade_r = duct_r - 5.0  # 5mm gap
+        mesh = trimesh.creation.cylinder(radius=blade_r, height=10)
+        meshes = {"blade_ring_stage_1": mesh}
+
+        results = validator.check_blade_tip_clearance(meshes)
+        assert len(results) == 1
+        assert results[0].passed
+        assert results[0].value == pytest.approx(5.0, abs=0.5)
 
 
 class TestBuildVolume:
@@ -71,6 +88,26 @@ class TestBuildVolume:
         results = validator.check_build_volume(meshes)
         assert len(results) == 1
         assert results[0].passed
+
+
+class TestAxialLayout:
+    """Test axial layout positioning."""
+
+    def test_part_positions_computed(self, default_config):
+        """Derived config includes part_positions dict."""
+        assert "part_positions" in default_config["derived"]
+        positions = default_config["derived"]["part_positions"]
+        assert "stator_entry" in positions
+        assert "blade_ring_stage_1" in positions
+        assert "stator_exit" in positions
+
+    def test_positions_increase_axially(self, default_config):
+        """Parts are positioned in correct axial order."""
+        positions = default_config["derived"]["part_positions"]
+        assert positions["stator_entry"] < positions["blade_ring_stage_1"]
+        assert positions["blade_ring_stage_1"] < positions["blade_ring_stage_2"]
+        assert positions["blade_ring_stage_2"] < positions["blade_ring_stage_3"]
+        assert positions["blade_ring_stage_3"] < positions["stator_exit"]
 
 
 class TestOverallAssembly:

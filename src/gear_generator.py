@@ -435,6 +435,7 @@ class GearGenerator:
         """Generate external gear solid using boolean tooth union.
 
         Creates root circle disk, then unions each tooth shape to it.
+        Supports double helical (herringbone) gears via twist extrusion.
 
         Args:
             spec: Gear specification (external)
@@ -443,6 +444,12 @@ class GearGenerator:
         Returns:
             CadQuery Workplane with the gear solid
         """
+        helix_angle = self.gears.get("helix_angle", 0)
+        herringbone_gap = self.gears.get("herringbone_gap", 1.0)
+
+        if helix_angle > 0:
+            return self._generate_external_helical(spec, bore_diameter, helix_angle, herringbone_gap)
+
         root_r = spec.root_diameter / 2
         tooth_profile = self._single_tooth_profile(spec)
 
@@ -473,10 +480,73 @@ class GearGenerator:
 
         return gear
 
+    def _generate_external_helical(self, spec: GearSpec, bore_diameter: float,
+                                    helix_angle: float, herringbone_gap: float) -> cq.Workplane:
+        """Generate double helical (herringbone) external gear.
+
+        Creates two spur-gear halves with opposite angular offsets to simulate
+        the herringbone tooth pattern. Uses the reliable boolean tooth approach
+        for each half. The angular offset between halves provides the axial
+        force cancellation benefit of true helical gears.
+        """
+        root_r = spec.root_diameter / 2
+        half_width = (spec.gear_width - herringbone_gap) / 2
+        tooth_profile = self._single_tooth_profile(spec)
+        tooth_angle = 360.0 / spec.teeth
+
+        # Rotation offset: half the total twist for each half
+        pitch_r = spec.pitch_diameter / 2
+        twist_deg = math.degrees(math.tan(math.radians(helix_angle)) * half_width / pitch_r)
+        half_twist = twist_deg / 2
+
+        # Lower half: teeth rotated by -half_twist
+        lower = cq.Workplane("XY").circle(root_r).extrude(half_width)
+        lower_tooth = (
+            cq.Workplane("XY")
+            .polyline(tooth_profile)
+            .close()
+            .extrude(half_width)
+        )
+        for i in range(spec.teeth):
+            rotated = lower_tooth.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle - half_twist)
+            lower = lower.union(rotated)
+
+        # Upper half: teeth rotated by +half_twist, offset along Z
+        upper_z = half_width + herringbone_gap
+        upper = (
+            cq.Workplane("XY")
+            .workplane(offset=upper_z)
+            .circle(root_r)
+            .extrude(half_width)
+        )
+        upper_tooth = (
+            cq.Workplane("XY")
+            .workplane(offset=upper_z)
+            .polyline(tooth_profile)
+            .close()
+            .extrude(half_width)
+        )
+        for i in range(spec.teeth):
+            rotated = upper_tooth.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle + half_twist)
+            upper = upper.union(rotated)
+
+        gear = lower.union(upper)
+
+        if bore_diameter > 0:
+            gear = (
+                gear
+                .faces(">Z").workplane()
+                .circle(bore_diameter / 2)
+                .cutThruAll()
+            )
+
+        return gear
+
     def _generate_ring_gear_solid(self, spec: GearSpec) -> cq.Workplane:
         """Generate ring (internal) gear solid.
 
         Creates annular ring, then cuts tooth space slots from the inner surface.
+        Supports double helical (herringbone) via twist extrusion of space cuts.
 
         Args:
             spec: Ring gear specification (must be internal)
@@ -484,11 +554,21 @@ class GearGenerator:
         Returns:
             CadQuery Workplane with the ring gear solid
         """
+        helix_angle = self.gears.get("helix_angle", 0)
+        herringbone_gap = self.gears.get("herringbone_gap", 1.0)
+
         inner_tip_r = spec.outer_diameter / 2      # inner tip radius
         outer_root_r = spec.root_diameter / 2       # outer root radius
         outer_wall_r = outer_root_r + 2 * spec.module  # wall beyond root
 
-        # Create annular ring (outer wall to inner tip)
+        space_profile = self._single_space_profile(spec)
+        tooth_angle = 360.0 / spec.teeth
+
+        if helix_angle > 0 and len(space_profile) >= 3:
+            return self._generate_ring_helical(spec, outer_wall_r, inner_tip_r,
+                                                space_profile, helix_angle, herringbone_gap)
+
+        # Spur ring gear (original code)
         ring = (
             cq.Workplane("XY")
             .circle(outer_wall_r)
@@ -496,8 +576,6 @@ class GearGenerator:
             .extrude(spec.gear_width)
         )
 
-        # Create one tooth space slot and cut rotated copies
-        space_profile = self._single_space_profile(spec)
         if len(space_profile) < 3:
             return ring
 
@@ -508,12 +586,64 @@ class GearGenerator:
             .extrude(spec.gear_width)
         )
 
-        tooth_angle = 360.0 / spec.teeth
         for i in range(spec.teeth):
             rotated = space_solid.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle)
             ring = ring.cut(rotated)
 
         return ring
+
+    def _generate_ring_helical(self, spec: GearSpec, outer_wall_r: float,
+                                inner_tip_r: float, space_profile: list,
+                                helix_angle: float, herringbone_gap: float) -> cq.Workplane:
+        """Generate double helical ring gear.
+
+        Creates two spur-ring halves with opposite angular offsets for the
+        herringbone pattern. Uses the reliable boolean space-cut approach.
+        """
+        half_width = (spec.gear_width - herringbone_gap) / 2
+        tooth_angle = 360.0 / spec.teeth
+        pitch_r = spec.pitch_diameter / 2
+        twist_deg = math.degrees(math.tan(math.radians(helix_angle)) * half_width / pitch_r)
+        half_twist = twist_deg / 2
+
+        # Lower half: spaces rotated by -half_twist
+        lower_ring = (
+            cq.Workplane("XY")
+            .circle(outer_wall_r)
+            .circle(inner_tip_r)
+            .extrude(half_width)
+        )
+        lower_space = (
+            cq.Workplane("XY")
+            .polyline(space_profile)
+            .close()
+            .extrude(half_width)
+        )
+        for i in range(spec.teeth):
+            rotated = lower_space.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle - half_twist)
+            lower_ring = lower_ring.cut(rotated)
+
+        # Upper half: spaces rotated by +half_twist
+        upper_z = half_width + herringbone_gap
+        upper_ring = (
+            cq.Workplane("XY")
+            .workplane(offset=upper_z)
+            .circle(outer_wall_r)
+            .circle(inner_tip_r)
+            .extrude(half_width)
+        )
+        upper_space = (
+            cq.Workplane("XY")
+            .workplane(offset=upper_z)
+            .polyline(space_profile)
+            .close()
+            .extrude(half_width)
+        )
+        for i in range(spec.teeth):
+            rotated = upper_space.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle + half_twist)
+            upper_ring = upper_ring.cut(rotated)
+
+        return lower_ring.union(upper_ring)
 
     def generate_planetary_stage(self, stage_index: int) -> Dict[str, cq.Workplane]:
         """Generate all gears for one planetary gear stage.

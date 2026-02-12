@@ -52,10 +52,14 @@ def main():
         "--view", action="store_true",
         help="Open interactive 3D viewer for STL files in output/"
     )
+    parser.add_argument(
+        "--gui", action="store_true",
+        help="Open Qt-based GUI with config editor and 3D viewer"
+    )
 
     args = parser.parse_args()
 
-    if not any([args.analyze, args.generate, args.validate_only, args.view]):
+    if not any([args.analyze, args.generate, args.validate_only, args.view, args.gui]):
         parser.print_help()
         sys.exit(1)
 
@@ -89,6 +93,8 @@ def main():
         run_validate_only(config)
     if args.view:
         run_view()
+    if args.gui:
+        run_gui(args.config)
 
 
 def run_analysis(config, bemt_results):
@@ -213,6 +219,14 @@ def run_view():
 
     print(f"\nOpening viewer with {len(stl_files)} STL files...")
     view_assembly(output_dir)
+
+
+def run_gui(config_path=None):
+    """Open Qt-based GUI with config editor and 3D viewer."""
+    from src.qt_viewer import launch_gui
+
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    launch_gui(config_path=config_path, output_dir=output_dir)
 
 
 if __name__ == "__main__":

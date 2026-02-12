@@ -235,7 +235,16 @@ class BEMTSolver:
             # Chord from blade loading (Schmitz method)
             chord = (8 * math.pi * r * math.sin(phi) * F) / (n_blades * design_cl) * a / max(1 - a, 0.01)
             chord = max(chord, 0.005)  # minimum 5mm chord
-            chord = min(chord, 0.08)   # maximum 80mm chord
+            # Duct-aware max chord: blade tip (at radial station r) must not
+            # extend past duct wall minus tip clearance.  With mid-chord
+            # centering the max tangential extent is chord/2, giving radial
+            # reach sqrt(r² + (chord/2)²) which must stay ≤ max_r.
+            duct_ir = self.config["duct"]["inner_diameter"] / 2 / 1000  # mm → m
+            tip_cl = self.config["blades"]["tip_clearance"] / 1000  # mm → m
+            max_r = duct_ir - tip_cl
+            max_chord_at_r = 2 * math.sqrt(max(max_r**2 - r**2, 0))
+            chord = min(chord, max_chord_at_r)
+            chord = min(chord, 0.08)   # absolute maximum 80mm chord
 
             # Local solidity
             sigma = n_blades * chord / (2 * math.pi * r)

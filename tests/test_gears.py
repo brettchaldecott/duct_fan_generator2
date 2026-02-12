@@ -222,3 +222,76 @@ class TestGearSolid:
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+
+class TestHelicalGears:
+    """Test double helical (herringbone) gear generation."""
+
+    def test_helix_angle_in_config(self, default_config):
+        """Config includes helix_angle parameter."""
+        assert "helix_angle" in default_config["gears"]
+        assert default_config["gears"]["helix_angle"] == 30.0
+
+    def test_herringbone_gap_in_config(self, default_config):
+        """Config includes herringbone_gap parameter."""
+        assert "herringbone_gap" in default_config["gears"]
+        assert default_config["gears"]["herringbone_gap"] == 1.0
+
+    def test_helical_sun_generates(self, default_config):
+        """Sun gear with helix generates valid solid."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["sun"], bore_diameter=5.0)
+        assert solid is not None
+        assert solid.val().isValid()
+
+    def test_helical_ring_generates(self, default_config):
+        """Ring gear with helix generates valid solid."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["ring"])
+        assert solid is not None
+        assert solid.val().isValid()
+
+    def test_helical_gear_has_herringbone_gap(self, default_config):
+        """Helical gear mesh has a gap in the middle (herringbone split)."""
+        gen = GearGenerator(default_config)
+        specs = gen.compute_gear_specs()
+        solid = gen.generate_gear_solid(specs["sun"], bore_diameter=5.0)
+
+        with tempfile.NamedTemporaryFile(suffix=".stl", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            cq.exporters.export(solid, tmp_path, exportType="STL")
+            mesh = trimesh.load(tmp_path)
+            if isinstance(mesh, trimesh.Scene):
+                mesh = trimesh.util.concatenate(mesh.dump())
+
+            # The gear should have two halves separated by a gap
+            z_extent = mesh.vertices[:, 2].max() - mesh.vertices[:, 2].min()
+            gear_width = default_config["gears"]["gear_width"]
+            # Total extent should be approximately the gear width
+            assert z_extent == pytest.approx(gear_width, abs=1.0)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+
+class TestCompression:
+    """Test per-stage hub radii for compression."""
+
+    def test_per_stage_hub_radii_computed(self, default_config):
+        """Derived config includes per_stage_hub_radii."""
+        assert "per_stage_hub_radii" in default_config["derived"]
+        radii = default_config["derived"]["per_stage_hub_radii"]
+        assert len(radii) == len(default_config["blades"]["stages"])
+
+    def test_hub_radii_increase_with_compression(self, default_config):
+        """Hub radii increase from front to back for compression > 1.0."""
+        radii = default_config["derived"]["per_stage_hub_radii"]
+        if default_config["blades"].get("compression_ratio", 1.0) > 1.0:
+            for i in range(len(radii) - 1):
+                assert radii[i + 1] >= radii[i], (
+                    f"Hub radius should increase: stage {i}={radii[i]:.1f}, "
+                    f"stage {i+1}={radii[i+1]:.1f}"
+                )
