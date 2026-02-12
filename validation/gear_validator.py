@@ -112,24 +112,31 @@ class GearValidator:
         return results
 
     def check_agma_stress(self) -> List[GearValidationResult]:
-        """Check AGMA bending stress with geometry factor."""
+        """Check AGMA bending stress with geometry factor.
+
+        In a planetary gearset, the total sun torque is shared among
+        num_planets meshes. The tangential force at each mesh is
+        F_t = T_motor / (r_sun × num_planets). Both sun and planet
+        teeth see this same mesh force.
+        """
         results = []
         uts = self.config["materials"]["mechanical"]["tensile_strength"]  # MPa
         module = self.config["gears"]["module"]
         face_width = self.config["gears"]["gear_width"]
+        num_planets = self.config["gears"]["num_planets"]
         motor_torque = self.config["motor"]["stall_torque"]  # N-m
+
+        # Mesh tangential force: shared among planets, referenced to sun pitch circle
+        sun_spec = self.specs["sun"]
+        r_sun = sun_spec.pitch_diameter / 2  # mm
+        F_t = (motor_torque * 1000) / (r_sun * num_planets)  # N
 
         for name in ["sun", "planet"]:
             spec = self.specs[name]
 
             # AGMA geometry factor J (approximate)
-            # For standard involute gears
-            J = 0.25 + 0.003 * spec.teeth  # simplified approximation
+            J = 0.25 + 0.003 * spec.teeth
             J = min(J, 0.45)
-
-            # Tangential force
-            r_pitch = spec.pitch_diameter / 2  # mm
-            F_t = (motor_torque * 1000) / r_pitch  # N
 
             # AGMA bending stress: σ = F_t / (m × b × J)
             sigma = F_t / (module * face_width * J)

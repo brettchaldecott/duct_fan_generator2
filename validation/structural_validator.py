@@ -78,8 +78,13 @@ class StructuralValidator:
         """Check gear tooth bending stress using Lewis equation.
 
         σ = F_t / (m × b × Y)
-        where F_t = torque / (pitch_radius), m = module, b = face width,
-        Y = Lewis form factor
+        where F_t = mesh tangential force, m = module, b = face width,
+        Y = Lewis form factor.
+
+        In a planetary gearset, the total sun torque is shared among
+        num_planets meshes. The tangential force at each sun-planet
+        contact is F_t = T_motor / (r_sun × num_planets). The same
+        force acts on the planet tooth at the mesh point.
         """
         results = []
         uts = self.mech_mat["tensile_strength"]  # MPa
@@ -90,22 +95,26 @@ class StructuralValidator:
         face_width = gears["gear_width"]  # mm
         sun_teeth = gears["sun_teeth"]
         planet_teeth = gears["planet_teeth"]
+        num_planets = gears["num_planets"]
+        pressure_angle = gears.get("pressure_angle", 20.0)
 
-        # Lewis form factor approximation (for 20° pressure angle)
         def lewis_Y(z):
+            """Lewis form factor, pressure-angle dependent."""
+            if pressure_angle >= 25.0:
+                return 0.175 - 0.841 / z
             return 0.154 - 0.912 / z
 
         # Motor torque at each gear stage
         motor_torque = self.config["motor"]["stall_torque"]  # N-m (worst case)
 
+        # Mesh tangential force: shared among planets, referenced to sun pitch circle
+        sun_pitch_radius = module * sun_teeth / 2  # mm
+        F_t = (motor_torque * 1000) / (sun_pitch_radius * num_planets)  # N
+
         for gear_name, teeth in [("sun", sun_teeth), ("planet", planet_teeth)]:
             Y = lewis_Y(teeth)
             if Y <= 0:
                 Y = 0.01  # Undercut gear — flag separately
-
-            pitch_radius = module * teeth / 2  # mm
-            # Tangential force on tooth
-            F_t = (motor_torque * 1000) / pitch_radius  # N (torque in N-mm / radius in mm)
 
             # Lewis bending stress
             sigma = F_t / (module * face_width * Y)  # MPa

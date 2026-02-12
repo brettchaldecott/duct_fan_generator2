@@ -14,11 +14,17 @@ class TestSteadyState:
         assert len(result.operating_points) == len(default_config["blades"]["stages"])
 
     def test_operating_rpms_positive(self, default_config, bemt_results):
-        """All operating RPMs are positive."""
+        """All operating RPMs are positive and near design targets."""
         sim = SystemSimulator(default_config)
         result = sim.simulate_full_system(bemt_results)
         for op in result.operating_points:
             assert op.rpm > 0, f"Stage {op.stage_index}: RPM={op.rpm}"
+            target = default_config["derived"]["stage_rpms"][op.stage_index]
+            error_pct = abs(op.rpm - target) / target
+            assert error_pct < 0.20, (
+                f"Stage {op.stage_index}: RPM={op.rpm:.0f} is {error_pct*100:.0f}% "
+                f"from target {target:.0f}"
+            )
 
     def test_power_in_positive(self, default_config, bemt_results):
         """All stages have positive power input."""
@@ -38,11 +44,69 @@ class TestSteadyState:
             )
 
     def test_convergence_status_reported(self, default_config, bemt_results):
-        """System reports convergence status (may or may not converge)."""
+        """System converges with properly sized motor."""
         sim = SystemSimulator(default_config)
         result = sim.simulate_full_system(bemt_results)
-        # converged is a boolean — just verify it's computed
-        assert isinstance(result.converged, bool)
+        assert result.converged is True, (
+            f"System did not converge. Operating RPMs: "
+            f"{[op.rpm for op in result.operating_points]}, "
+            f"targets: {default_config['derived']['stage_rpms']}"
+        )
+
+    def test_shared_motor_equilibrium(self, default_config, bemt_results):
+        """All stages derive RPM from the same motor RPM via gear ratios."""
+        sim = SystemSimulator(default_config)
+        result = sim.simulate_full_system(bemt_results)
+        ops = result.operating_points
+        # Recover motor RPM from each stage
+        motor_rpms = []
+        for op in ops:
+            ratio = sim.gear_ratio_for_stage(op.stage_index)
+            motor_rpms.append(op.rpm * ratio)
+        # All should agree (same motor)
+        for m_rpm in motor_rpms:
+            assert abs(m_rpm - motor_rpms[0]) < 1.0, (
+                f"Motor RPMs disagree: {motor_rpms}"
+            )
+
+
+class TestPerStageEfficiency:
+    """Test per-stage gear efficiency."""
+
+    def test_stage_0_no_gear_loss(self, default_config):
+        """Stage 0 (direct drive) has efficiency 1.0."""
+        sim = SystemSimulator(default_config)
+        assert sim.gear_efficiency_for_stage(0) == 1.0
+
+    def test_stage_1_one_gear_stage(self, default_config):
+        """Stage 1 traverses 1 gear stage -> eta = 0.95."""
+        sim = SystemSimulator(default_config)
+        eta = default_config["gears"]["efficiency_per_stage"]
+        assert sim.gear_efficiency_for_stage(1) == pytest.approx(eta)
+
+    def test_stage_2_two_gear_stages(self, default_config):
+        """Stage 2 traverses 2 gear stages -> eta = 0.95^2."""
+        sim = SystemSimulator(default_config)
+        eta = default_config["gears"]["efficiency_per_stage"]
+        assert sim.gear_efficiency_for_stage(2) == pytest.approx(eta ** 2)
+
+    def test_gear_ratio_stage_0(self, default_config):
+        """Stage 0 has gear ratio 1.0 (direct drive)."""
+        sim = SystemSimulator(default_config)
+        assert sim.gear_ratio_for_stage(0) == 1.0
+
+    def test_gear_ratio_stage_1(self, default_config):
+        """Stage 1 has gear ratio = gear_ratio^1."""
+        sim = SystemSimulator(default_config)
+        assert sim.gear_ratio_for_stage(1) == pytest.approx(
+            default_config["derived"]["gear_ratio"]
+        )
+
+    def test_gear_ratio_stage_2(self, default_config):
+        """Stage 2 has gear ratio = gear_ratio^2."""
+        sim = SystemSimulator(default_config)
+        gr = default_config["derived"]["gear_ratio"]
+        assert sim.gear_ratio_for_stage(2) == pytest.approx(gr ** 2)
 
 
 class TestMotorModel:
