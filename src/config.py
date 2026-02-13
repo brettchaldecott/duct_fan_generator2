@@ -323,8 +323,11 @@ def compute_derived(config: dict) -> None:
     blade_n_center = positions[f"blade_ring_stage_{num_blade_stages}"]
     blade_end = blade_n_center + blade_axial_width / 2
     hub_margin = hub_cfg["wall_thickness"] + 5  # wall + bearing space
-    hub_start = blade_start - hub_margin
-    hub_end = blade_end + hub_margin
+    # Extend hub to overlap with stator zones for structural continuity
+    stator_entry_end = positions["stator_entry"] + stator_chord
+    stator_exit_start = positions["stator_exit"]
+    hub_start = min(blade_start - hub_margin, stator_entry_end - 2.0)
+    hub_end = max(blade_end + hub_margin, stator_exit_start + 2.0)
     hub_length = hub_end - hub_start
     derived["hub_length"] = hub_length
 
