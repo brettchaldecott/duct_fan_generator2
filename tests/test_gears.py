@@ -192,16 +192,17 @@ class TestGearSolid:
         assert solid.val().isValid()
 
     def test_planetary_stage_generates(self, default_config):
-        """All gears (sun + 3 planets + ring) generated for a stage."""
+        """All gears (sun + 3 planets + ring + output hub) generated for a stage."""
         gen = GearGenerator(default_config)
         solids = gen.generate_planetary_stage(0)
-        # Should have: 1 sun + 3 planets + 1 ring = 5 parts
+        # Should have: 1 sun + 3 planets + 1 ring + 1 output hub = 6 parts
         assert "gear_sun_stage_0" in solids
         assert "gear_ring_stage_0" in solids
+        assert "ring_output_hub_stage_0" in solids
         num_planets = default_config["gears"]["num_planets"]
         for j in range(num_planets):
             assert f"gear_planet_{j}_stage_0" in solids
-        assert len(solids) == 1 + num_planets + 1
+        assert len(solids) == 1 + num_planets + 1 + 1
 
     def test_gear_solid_exportable(self, default_config):
         """Gear solid can be exported to STL and loaded as trimesh."""

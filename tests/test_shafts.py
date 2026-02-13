@@ -30,13 +30,17 @@ class TestShaftGeneration:
         assert tube.val().isValid()
 
     def test_all_shafts_generate(self, default_config):
-        """All shafts and tubes generate."""
+        """All shafts, tubes, and coupling discs generate."""
         gen = ShaftGenerator(default_config)
         parts = gen.generate_all()
-        assert len(parts) == 3
+        num_stages = len(default_config["blades"]["stages"])
+        # 3 shafts/tubes + N coupling discs
+        assert len(parts) == 3 + num_stages
         assert "inner_shaft" in parts
         assert "middle_tube" in parts
         assert "outer_tube" in parts
+        for i in range(num_stages):
+            assert f"coupling_disc_stage_{i+1}" in parts
         for name, solid in parts.items():
             assert solid.val().isValid(), f"{name} is not valid"
 

@@ -65,8 +65,13 @@ class ResonanceValidator:
         mat = self.config["materials"]["blade"]
 
         # Blade span per stage — uses ring_outer_r (actual blade root)
+        # and per-stage tip radius for converging duct
         blade_ring_radii = self.derived.get("blade_ring_radii", None)
-        tip_r = self.derived["blade_tip_radius"]
+        per_stage_tip_radii = self.derived.get("per_stage_tip_radii", None)
+        if per_stage_tip_radii and stage_index < len(per_stage_tip_radii):
+            tip_r = per_stage_tip_radii[stage_index]
+        else:
+            tip_r = self.derived["blade_tip_radius"]
         if blade_ring_radii and stage_index < len(blade_ring_radii):
             hub_r = blade_ring_radii[stage_index]["ring_outer_r"]
         else:

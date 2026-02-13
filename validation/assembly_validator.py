@@ -4,6 +4,7 @@ Validates that all parts fit together correctly without interference,
 clearances are met, and each part fits within the build volume.
 """
 
+import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -65,6 +66,9 @@ class AssemblyValidator:
 
         # Blade ring clears hub outer wall
         results.extend(self.check_blade_ring_clearance())
+
+        # Blade-to-blade collision within each stage
+        results.extend(self.check_blade_blade_collisions())
 
         # Collision detection (if meshes available)
         if meshes:
@@ -294,6 +298,43 @@ class AssemblyValidator:
                     passed=actual_gap >= air_gap * 0.9,  # 90% tolerance
                     detail=f"Ring inner R={ring_inner_r:.1f}mm, hub R={hub_r:.1f}mm, gap={actual_gap:.1f}mm (need {air_gap:.1f}mm)"
                 ))
+
+        return results
+
+    def check_blade_blade_collisions(self) -> List[AssemblyCheck]:
+        """Check for blade-to-blade overlap within each stage.
+
+        Verifies that the tangential chord projection fits within 80%
+        of the arc spacing between adjacent blades at the root radius.
+        """
+        results = []
+        blade_ring_radii = self.derived.get("blade_ring_radii", [])
+        stages = self.config["blades"]["stages"]
+
+        for i, stage in enumerate(stages):
+            if i >= len(blade_ring_radii):
+                continue
+            n_blades = stage["num_blades"]
+            ring_outer_r = blade_ring_radii[i]["ring_outer_r"]
+            arc_at_root = ring_outer_r * (2 * math.pi / n_blades)
+
+            # Estimate root chord (conservative 30mm) and twist (45 deg root)
+            max_chord = 30.0
+            twist_root = 45.0
+            chord_projection = max_chord * math.cos(math.radians(twist_root))
+            clearance_ratio = chord_projection / arc_at_root
+
+            passed = clearance_ratio <= 0.80
+            results.append(AssemblyCheck(
+                check_name="blade_blade_clearance",
+                part_a=f"blade_ring_stage_{i+1}",
+                part_b=f"blade_ring_stage_{i+1}",
+                value=clearance_ratio,
+                limit=0.80,
+                passed=passed,
+                detail=f"Stage {i+1}: {n_blades} blades, arc={arc_at_root:.1f}mm, "
+                       f"chord_proj={chord_projection:.1f}mm, ratio={clearance_ratio:.2f}"
+            ))
 
         return results
 

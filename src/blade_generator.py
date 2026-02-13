@@ -44,7 +44,12 @@ class BladeRingGenerator:
             self.ring_inner_r = self.hub_r + air_gap
             self.ring_outer_r = self.ring_inner_r + wall_t
 
-        self.tip_r = self.derived["blade_tip_radius"]   # mm
+        # Use per-stage tip radius for converging duct
+        per_stage_tip_radii = self.derived.get("per_stage_tip_radii", None)
+        if per_stage_tip_radii and stage_index < len(per_stage_tip_radii):
+            self.tip_r = per_stage_tip_radii[stage_index]
+        else:
+            self.tip_r = self.derived["blade_tip_radius"]   # mm
         self.n_blades = self.blade_cfg["num_blades"]
         self.direction = self.derived["stage_directions"][stage_index]
 
@@ -120,6 +125,14 @@ class BladeRingGenerator:
             max_chord_at_r = 2 * math.sqrt(max(max_r**2 - r**2, 0))
             chord = min(chord, max_chord_at_r)
             chord = min(chord, 80)  # absolute maximum 80mm
+
+            # Angular spacing chord limit: prevent blade-to-blade clashing
+            # Tangential extent = chord * cos(twist). Must fit within 80% of arc.
+            arc_at_r = r * (2 * math.pi / self.n_blades)
+            cos_twist = max(math.cos(math.radians(twist)), 0.3)
+            max_chord_angular = arc_at_r * 0.80 / cos_twist
+            chord = min(chord, max_chord_angular)
+
             chord = max(chord, MIN_CHORD)
 
             # Skip this section if chord exceeds duct constraint at minimum

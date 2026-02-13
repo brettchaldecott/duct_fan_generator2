@@ -15,6 +15,7 @@ duct:
   wall_thickness: 4.0         # mm
   length_factor: 1.2          # multiplier of hub length
   bellmouth_radius: 15.0      # mm
+  exit_diameter_ratio: 0.85   # exit ID / inlet ID (< 1.0 = converging duct)
 
 gears:
   module: 2.0                 # mm (sized for motor torque)
@@ -65,7 +66,7 @@ blades:
       design_cl: 0.9
   tip_clearance: 1.5
   num_radial_sections: 10
-  compression_ratio: 1.15     # total pressure ratio across all stages (1.0 = no compression)
+  compression_ratio: 1.5      # total pressure ratio across all stages (1.0 = no compression)
 
 hub:
   wall_thickness: 3.0

@@ -7,7 +7,7 @@ in the correct order per the validate-before-generate philosophy.
 import os
 import io
 import tempfile
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 import cadquery as cq
 import trimesh
@@ -214,56 +214,62 @@ class AssemblyGenerator:
 
         return report
 
-    def generate_all_meshes(self) -> Dict[str, trimesh.Trimesh]:
-        """Generate all CAD geometry and convert to trimesh for validation.
+    def generate_all_solids(self) -> Dict[str, cq.Workplane]:
+        """Generate all CAD geometry as CadQuery solids.
 
-        Returns dict of part_name -> trimesh.Trimesh
+        Returns dict of part_name -> cq.Workplane
         """
-        meshes = {}
+        solids = {}
 
         # Hub halves
         hub_gen = HubGenerator(self.config)
-        half_a = hub_gen.generate_half_a()
-        half_b = hub_gen.generate_half_b()
-        meshes["hub_half_a"] = self._cq_to_trimesh(half_a)
-        meshes["hub_half_b"] = self._cq_to_trimesh(half_b)
+        solids["hub_half_a"] = hub_gen.generate_half_a()
+        solids["hub_half_b"] = hub_gen.generate_half_b()
 
         # Blade rings
         for i in range(len(self.config["blades"]["stages"])):
             bemt_stage = self.bemt_results.stages[i] if self.bemt_results else None
             blade_gen = BladeRingGenerator(self.config, i, bemt_stage)
-            blade_ring = blade_gen.generate()
-            meshes[f"blade_ring_stage_{i+1}"] = self._cq_to_trimesh(blade_ring)
+            solids[f"blade_ring_stage_{i+1}"] = blade_gen.generate()
 
         # Stators
         stator_gen = StatorGenerator(self.config)
-        meshes["stator_entry"] = self._cq_to_trimesh(stator_gen.generate_entry_stator())
-        meshes["stator_exit"] = self._cq_to_trimesh(stator_gen.generate_exit_stator())
+        solids["stator_entry"] = stator_gen.generate_entry_stator()
+        solids["stator_exit"] = stator_gen.generate_exit_stator()
 
         # Duct sections
         duct_gen = DuctGenerator(self.config)
         duct_sections = duct_gen.generate()
         for j, section in enumerate(duct_sections):
-            meshes[f"duct_section_{j+1}"] = self._cq_to_trimesh(section)
+            solids[f"duct_section_{j+1}"] = section
 
         # Gear stages
         gear_gen = GearGenerator(self.config)
         num_gear_stages = self.config["gears"].get("num_stages", 1)
         for stage_idx in range(num_gear_stages):
             gear_solids = gear_gen.generate_planetary_stage(stage_idx)
-            for name, solid in gear_solids.items():
-                meshes[name] = self._cq_to_trimesh(solid)
+            solids.update(gear_solids)
 
         # Carrier plates
         carrier_gen = CarrierGenerator(self.config)
         carrier_solids = carrier_gen.generate_all_carriers()
-        for name, solid in carrier_solids.items():
-            meshes[name] = self._cq_to_trimesh(solid)
+        solids.update(carrier_solids)
 
         # Concentric shafts and tubes
         shaft_gen = ShaftGenerator(self.config)
         shaft_solids = shaft_gen.generate_all()
-        for name, solid in shaft_solids.items():
+        solids.update(shaft_solids)
+
+        return solids
+
+    def generate_all_meshes(self) -> Dict[str, trimesh.Trimesh]:
+        """Generate all CAD geometry and convert to trimesh for validation.
+
+        Returns dict of part_name -> trimesh.Trimesh
+        """
+        solids = self.generate_all_solids()
+        meshes = {}
+        for name, solid in solids.items():
             meshes[name] = self._cq_to_trimesh(solid)
 
         # Apply axial layout positioning
@@ -283,8 +289,7 @@ class AssemblyGenerator:
             positioned[name] = mesh
         return positioned
 
-    @staticmethod
-    def _find_position(name: str, positions: dict) -> float:
+    def _find_position(self, name: str, positions: dict) -> float:
         """Find the Z position for a named part from the layout dict."""
         # Direct match
         if name in positions:
@@ -298,14 +303,28 @@ class AssemblyGenerator:
                     if f"stage_{stage_num}" in name:
                         return positions[key]
 
+        # Ring output hubs: ring_output_hub_stage_0 -> ring_output_hub_stage_0
+        if name.startswith("ring_output_hub_"):
+            if name in positions:
+                return positions[name]
+
         # Pattern matching for carrier parts: carrier_front_0 -> carrier_front_0
         if name.startswith("carrier_"):
             if name in positions:
                 return positions[name]
 
-        # Shafts and tubes positioned at hub start
-        if name in ("inner_shaft", "middle_tube", "outer_tube"):
-            return positions.get("hub_half_a", 0.0)
+        # Coupling discs: coupling_disc_stage_N -> blade ring center Z
+        if name.startswith("coupling_disc_"):
+            if name in positions:
+                return positions[name]
+
+        # Shafts and tubes positioned at their computed start Z
+        if name == "inner_shaft":
+            return self.derived.get("inner_shaft_start_z", positions.get("hub_half_a", 0.0))
+        if name == "middle_tube":
+            return self.derived.get("middle_tube_start_z", positions.get("hub_half_a", 0.0))
+        if name == "outer_tube":
+            return self.derived.get("outer_tube_start_z", positions.get("hub_half_a", 0.0))
 
         # Pattern matching for duct sections
         if "duct" in name:
@@ -360,6 +379,47 @@ class AssemblyGenerator:
             result["exported_files"].append(filepath)
 
         return result
+
+    def export_step(self, solids: Dict[str, cq.Workplane] = None) -> List[str]:
+        """Export all parts as STEP files for FreeCAD/CAD workflow.
+
+        Exports each part individually and a combined assembly STEP.
+
+        Args:
+            solids: Pre-generated solids dict. If None, generates them.
+
+        Returns:
+            List of exported STEP file paths.
+        """
+        if solids is None:
+            solids = self.generate_all_solids()
+
+        step_dir = os.path.join(self.output_dir, "step")
+        os.makedirs(step_dir, exist_ok=True)
+
+        exported = []
+        positions = self.derived.get("part_positions", {})
+
+        # Export individual parts (positioned)
+        for name, solid in solids.items():
+            filepath = os.path.join(step_dir, f"{name}.step")
+            z_offset = self._find_position(name, positions)
+            if z_offset != 0:
+                solid = solid.translate((0, 0, z_offset))
+            cq.exporters.export(solid, filepath, exportType="STEP")
+            exported.append(filepath)
+
+        # Export combined assembly
+        assembly = cq.Assembly()
+        for name, solid in solids.items():
+            z_offset = self._find_position(name, positions)
+            assembly.add(solid, name=name, loc=cq.Location((0, 0, z_offset)))
+
+        asm_path = os.path.join(step_dir, "full_assembly.step")
+        assembly.save(asm_path, exportType="STEP")
+        exported.append(asm_path)
+
+        return exported
 
     @staticmethod
     def _cq_to_trimesh(cq_solid: cq.Workplane) -> trimesh.Trimesh:

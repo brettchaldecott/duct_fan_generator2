@@ -56,10 +56,14 @@ def main():
         "--gui", action="store_true",
         help="Open Qt-based GUI with config editor and 3D viewer"
     )
+    parser.add_argument(
+        "--step", action="store_true",
+        help="Export STEP files alongside STLs (for FreeCAD workflow)"
+    )
 
     args = parser.parse_args()
 
-    if not any([args.analyze, args.generate, args.validate_only, args.view, args.gui]):
+    if not any([args.analyze, args.generate, args.validate_only, args.view, args.gui, args.step]):
         parser.print_help()
         sys.exit(1)
 
@@ -89,6 +93,8 @@ def main():
         run_analysis(config, bemt_results)
     if args.generate:
         run_generate(config, bemt_results, args.part, args.force)
+    if args.step:
+        run_step_export(config, bemt_results)
     if args.validate_only:
         run_validate_only(config)
     if args.view:
@@ -173,6 +179,27 @@ def run_generate(config, bemt_results, part=None, force=False):
     report_gen.generate_validation_report(analysis)
     report_gen.generate_bom()
     print("\nReports saved to output/")
+
+
+def run_step_export(config, bemt_results):
+    """Export STEP files for FreeCAD workflow."""
+    print("\n" + "=" * 60)
+    print("EXPORTING STEP FILES")
+    print("=" * 60)
+
+    generator = AssemblyGenerator(config, bemt_results)
+    print("Generating solids...")
+    solids = generator.generate_all_solids()
+    print(f"  Generated {len(solids)} parts")
+
+    print("Exporting STEP files...")
+    exported = generator.export_step(solids)
+
+    print(f"\nExported {len(exported)} STEP files:")
+    for f in exported:
+        print(f"  {os.path.basename(f)}")
+
+    print(f"\nFull assembly: output/step/full_assembly.step")
 
 
 def run_validate_only(config):

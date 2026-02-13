@@ -205,27 +205,48 @@ def compute_derived(config: dict) -> None:
     # Placeholder — will be set by layout computation.
     hub_length = 0  # computed later from layout
 
+    # --- Duct convergence ---
+    exit_diameter_ratio = duct.get("exit_diameter_ratio", 1.0)
+    duct_inlet_id = duct["inner_diameter"]
+    duct_exit_id = duct_inlet_id * exit_diameter_ratio
+    derived["duct_inlet_id"] = duct_inlet_id
+    derived["duct_exit_id"] = duct_exit_id
+
     # --- Blade geometry bounds ---
     # blade_hub_radius is the physical hub OD/2 (used for hub geometry)
     # blade_root_radius will be updated after blade ring radii are computed (below)
     derived["blade_hub_radius"] = hub_od / 2
-    derived["blade_tip_radius"] = duct["inner_diameter"] / 2 - blades["tip_clearance"]
+    derived["blade_tip_radius"] = duct_inlet_id / 2 - blades["tip_clearance"]
     blade_span = derived["blade_tip_radius"] - derived["blade_hub_radius"]
     derived["blade_span"] = blade_span
 
+    # --- Per-stage tip radii (for converging duct) ---
+    num_blade_stages = len(blades["stages"])
+    per_stage_tip_radii = []
+    for i in range(num_blade_stages):
+        # Linear interpolation of duct ID from inlet to exit
+        frac = i / max(num_blade_stages - 1, 1)
+        stage_duct_id = duct_inlet_id + frac * (duct_exit_id - duct_inlet_id)
+        stage_tip_r = stage_duct_id / 2 - blades["tip_clearance"]
+        per_stage_tip_radii.append(stage_tip_r)
+    derived["per_stage_tip_radii"] = per_stage_tip_radii
+
     # --- Per-stage hub radii for compression ---
     compression_ratio = blades.get("compression_ratio", 1.0)
-    num_blade_stages = len(blades["stages"])
-    tip_r = duct["inner_diameter"] / 2 - blades["tip_clearance"]
+    tip_r = duct_inlet_id / 2 - blades["tip_clearance"]
 
     if compression_ratio > 1.0 and num_blade_stages > 0:
         gamma = 1.4  # air
         per_stage_hub_radii = []
-        area_current = math.pi * (tip_r**2 - (hub_od / 2)**2)
+        # Use inlet tip radius for hub growth calculation so hub growth is
+        # independent of duct convergence — both effects contribute to
+        # visible compression.
+        tip_r_inlet = duct_inlet_id / 2 - blades["tip_clearance"]
+        area_current = math.pi * (tip_r_inlet**2 - (hub_od / 2)**2)
         pr_per_stage = compression_ratio ** (1.0 / num_blade_stages)
 
         for i in range(num_blade_stages):
-            hub_r_i = math.sqrt(max(tip_r**2 - area_current / math.pi, (hub_od / 2)**2))
+            hub_r_i = math.sqrt(max(tip_r_inlet**2 - area_current / math.pi, (hub_od / 2)**2))
             per_stage_hub_radii.append(hub_r_i)
             # Reduce annulus area for next stage (isentropic compression)
             area_current /= pr_per_stage ** (1.0 / gamma)
@@ -365,6 +386,49 @@ def compute_derived(config: dict) -> None:
     derived["outer_tube_od"] = bearings["outer_tube"]["id"]  # 25mm
     derived["outer_tube_id"] = derived["middle_tube_od"] + 2.0  # clearance over middle tube
     derived["ring_outer_wall_radius"] = ring_outer_wall_d / 2
+
+    # --- Tube axial extents (prevent gear interference) ---
+    # Inner shaft: runs full hub length (5mm fits through all bores)
+    derived["inner_shaft_start_z"] = hub_start
+    derived["inner_shaft_end_z"] = hub_end
+
+    # Middle tube: starts after gear stage 0 back carrier, ends before gear stage 1 sun
+    # (middle tube OD 15mm can't pass through stage 0 sun bore of 5mm)
+    if num_gear_stages >= 1 and "carrier_back_0" in positions:
+        middle_start = positions["carrier_back_0"] + carrier_width
+    else:
+        middle_start = hub_start
+    # Extends through blade stage 2 coupling zone and up to gear stage 1 if present
+    if num_gear_stages >= 2 and "gear_stage_1" in positions:
+        middle_end = positions["gear_stage_1"] + gear_width
+    else:
+        middle_end = hub_end
+    derived["middle_tube_start_z"] = middle_start
+    derived["middle_tube_end_z"] = middle_end
+
+    # Outer tube: starts after gear stage 1 back carrier, extends to blade stage 3
+    # (outer tube OD 25mm can't pass through any sun gear bore)
+    if num_gear_stages >= 2 and "carrier_back_1" in positions:
+        outer_start = positions["carrier_back_1"] + carrier_width
+    else:
+        outer_start = hub_start
+    # Extends through blade stage 3 coupling zone to end of hub
+    outer_end = hub_end
+    derived["outer_tube_start_z"] = outer_start
+    derived["outer_tube_end_z"] = outer_end
+
+    # --- Ring gear output hub positions ---
+    # Each ring gear output hub sits at the back of its gear stage
+    for i in range(num_gear_stages):
+        gear_key = f"gear_stage_{i}"
+        if gear_key in positions:
+            positions[f"ring_output_hub_stage_{i}"] = positions[gear_key] + gear_width
+
+    # --- Coupling disc positions (at blade ring centers) ---
+    for i in range(num_blade_stages):
+        blade_key = f"blade_ring_stage_{i+1}"
+        if blade_key in positions:
+            positions[f"coupling_disc_stage_{i+1}"] = positions[blade_key]
 
     config["derived"] = derived
 
