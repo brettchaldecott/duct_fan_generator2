@@ -192,6 +192,9 @@ class BladeRingGenerator:
             chord = np.max(profile[:, 0]) - np.min(profile[:, 0])
             centered = profile.copy()
             centered[:, 0] -= chord * 0.5
+            # Flip camber so pressure side faces downstream (+Z) and
+            # suction side faces upstream (-Z), matching fan blade convention
+            centered[:, 1] *= -1
 
             # Rotate 2D profile by twist angle
             rotated_y = centered[:, 0] * cos_t - centered[:, 1] * sin_t
