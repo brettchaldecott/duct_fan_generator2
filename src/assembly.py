@@ -434,6 +434,9 @@ class AssemblyGenerator:
             if isinstance(mesh, trimesh.Scene):
                 mesh = trimesh.util.concatenate(mesh.dump())
             return mesh
+        except Exception:
+            # Return empty mesh if STL export/load fails (e.g. degenerate solid)
+            return trimesh.Trimesh()
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)

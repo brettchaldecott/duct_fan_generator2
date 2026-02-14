@@ -602,7 +602,15 @@ class GearGenerator:
             rotated = space_solid.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle)
             space_solids.append(rotated.val())
         ring_val = ring.val()
-        ring = cq.Workplane("XY").newObject([ring_val.cut(*space_solids)])
+        result = ring_val.cut(*space_solids)
+        result = result.clean()
+        if result.Volume() < 1.0:
+            # Fallback: sequential cuts
+            for solid in space_solids:
+                wp = cq.Workplane("XY").newObject([solid])
+                ring = ring.cut(wp)
+        else:
+            ring = cq.Workplane("XY").newObject([result])
 
         return ring
 
@@ -633,13 +641,16 @@ class GearGenerator:
             .close()
             .twistExtrude(half_width, twist_deg)
         )
-        # Batch all space cuts into one cut operation (much faster than sequential cuts)
+        # Fuse all space solids into one compound, then cut once.
+        # Direct batch cut (ring.cut(*spaces)) corrupts OCCT topology for
+        # helical twist-extruded spaces, producing untessellatable solids.
         lower_space_solids = []
         for i in range(spec.teeth):
             rotated = lower_space.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle)
             lower_space_solids.append(rotated.val())
-        lower_ring_val = lower_ring.val()
-        lower_ring = cq.Workplane("XY").newObject([lower_ring_val.cut(*lower_space_solids)])
+        lower_compound = lower_space_solids[0].fuse(*lower_space_solids[1:]).clean()
+        lower_result = lower_ring.val().cut(lower_compound).clean()
+        lower_ring = cq.Workplane("XY").newObject([lower_result])
 
         # Upper half: opposite twist (negative = herringbone V)
         upper_z = half_width + herringbone_gap
@@ -657,13 +668,14 @@ class GearGenerator:
             .close()
             .twistExtrude(half_width, -twist_deg)
         )
-        # Batch all space cuts into one cut operation
+        # Fuse all space solids into one compound, then cut once (same as lower half)
         upper_space_solids = []
         for i in range(spec.teeth):
             rotated = upper_space.rotate((0, 0, 0), (0, 0, 1), i * tooth_angle)
             upper_space_solids.append(rotated.val())
-        upper_ring_val = upper_ring.val()
-        upper_ring = cq.Workplane("XY").newObject([upper_ring_val.cut(*upper_space_solids)])
+        upper_compound = upper_space_solids[0].fuse(*upper_space_solids[1:]).clean()
+        upper_result = upper_ring.val().cut(upper_compound).clean()
+        upper_ring = cq.Workplane("XY").newObject([upper_result])
 
         return lower_ring.union(upper_ring)
 

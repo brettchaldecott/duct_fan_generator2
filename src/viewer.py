@@ -26,12 +26,19 @@ PART_COLORS = {
     "inner_shaft": (0.4, 0.4, 0.7),   # steel blue
     "middle_tube": (0.5, 0.5, 0.8),   # lighter blue
     "outer_tube": (0.6, 0.6, 0.9),    # lightest blue
+    "coupling_disc": (0.9, 0.5, 0.2),     # orange
+    "ring_output_hub": (0.7, 0.3, 0.6),   # purple
 }
 
 
 def _classify_part(name: str) -> str:
     """Map an STL filename to a part type key for coloring."""
     name_lower = name.lower()
+    # Check specific multi-word keys first (before generic substring matches)
+    if "coupling_disc" in name_lower:
+        return "coupling_disc"
+    if "ring_output_hub" in name_lower:
+        return "ring_output_hub"
     for key in PART_COLORS:
         if key in name_lower:
             return key
@@ -87,6 +94,8 @@ def view_assembly(stl_dir: str, window_size: Optional[tuple] = None):
         plotter.clear()
         legend_entries.clear()
         for name, mesh, color, opacity in loaded_parts:
+            if mesh.n_points == 0:
+                continue
             display_mesh = mesh
             if clip:
                 # Clip at Y=0 plane, showing Y>0 half to reveal internals

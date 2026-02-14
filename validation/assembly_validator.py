@@ -84,6 +84,8 @@ class AssemblyValidator:
         max_z = self.print_cfg["max_build_z"]
 
         for name, mesh in meshes.items():
+            if len(mesh.vertices) == 0:
+                continue
             bb = mesh.bounding_box.extents
             fits = bb[0] <= max_x and bb[1] <= max_y and bb[2] <= max_z
 

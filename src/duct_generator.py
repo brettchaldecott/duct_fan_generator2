@@ -86,7 +86,7 @@ class DuctGenerator:
                 .lineTo(outer_r, length)
                 .lineTo(inner_r_exit, length)
                 .close()
-                .revolve(360, (0, 0, 0), (0, 0, 1))
+                .revolve(360, (0, 0, 0), (0, 1, 0))
             )
         else:
             # Straight duct: extruded annulus (always watertight)
@@ -119,7 +119,7 @@ class DuctGenerator:
                 .lineTo(outer_r + br + taper_margin, -br)
                 .lineTo(outer_r + br + taper_margin, 0)
                 .close()
-                .revolve(360, (0, 0, 0), (0, 0, 1))
+                .revolve(360, (0, 0, 0), (0, 1, 0))
             )
 
             bellmouth_ring = bellmouth_ring.cut(taper_cut)

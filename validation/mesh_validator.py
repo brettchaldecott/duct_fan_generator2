@@ -51,6 +51,22 @@ class MeshValidator:
         """
         details = []
 
+        # Empty mesh guard
+        if len(mesh.vertices) == 0:
+            details.append("Mesh is empty (0 vertices)")
+            return MeshValidationResult(
+                part_name=part_name,
+                is_watertight=False,
+                is_volume=False,
+                has_degenerate_faces=False,
+                num_degenerate=0,
+                volume_mm3=0,
+                bounding_box=(0, 0, 0),
+                fits_build_volume=True,
+                passed=False,
+                details=details,
+            )
+
         # Watertight check
         is_watertight = mesh.is_watertight
         if not is_watertight:
