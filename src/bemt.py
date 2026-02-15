@@ -214,7 +214,11 @@ class BEMTSolver:
             v_axial = v_inf * (1 + a) if v_inf > 0 else max(a * u_theta, 0.1)
 
             # Tangential velocity relative to blade
-            v_tan = u_theta * (1 - a_prime) + v_swirl_in
+            # For CW stage (+1) with CCW inlet swirl (negative), the swirl
+            # opposes blade rotation and increases relative v_tan; for CCW
+            # stage (-1) with CW inlet swirl (positive), same effect.
+            # General: v_tan = u_theta*(1-a') - direction * v_swirl_lab
+            v_tan = u_theta * (1 - a_prime) - direction * v_swirl_in
 
             # Flow angle
             phi = math.atan2(v_axial, v_tan) if v_tan != 0 else math.pi / 2
@@ -293,7 +297,7 @@ class BEMTSolver:
 
         # Compute elemental loads using blade element theory
         v_axial = v_inf * (1 + a) if v_inf > 0 else max(a * u_theta, 0.1)
-        v_tan = u_theta * (1 - a_prime) + v_swirl_in
+        v_tan = u_theta * (1 - a_prime) - direction * v_swirl_in
         w = math.sqrt(v_axial**2 + v_tan**2)
 
         # Ensure phi is in valid range for thrust production
