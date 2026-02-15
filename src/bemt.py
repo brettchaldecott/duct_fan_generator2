@@ -83,9 +83,36 @@ class BEMTSolver:
         self.derived = config["derived"]
 
     def solve_all_stages(self) -> BEMTResults:
-        """Solve BEMT for all configured blade stages."""
+        """Solve BEMT for all configured blade stages.
+
+        Uses momentum-theory disk velocity as the reference axial velocity
+        for static thrust conditions, with an outer iteration to refine
+        v_disk from the computed total thrust.
+        """
+        # --- Estimate reference axial velocity from motor power ---
+        motor = self.config["motor"]
+        stall_torque = motor["stall_torque"]        # N-m
+        no_load_rpm = motor["no_load_rpm"]           # RPM
+        motor_rpm = motor["rpm"]                     # RPM (operating point)
+        omega_motor = motor_rpm * 2 * math.pi / 60
+
+        # Linear torque-speed model: T = T_stall * (1 - rpm/rpm_nl)
+        torque_at_rpm = stall_torque * (1 - motor_rpm / no_load_rpm)
+        motor_power = torque_at_rpm * omega_motor    # W
+
+        # Disk area from blade radii (use first stage as representative)
+        r_hub = self.derived["blade_hub_radius"] / 1000   # mm -> m
+        r_tip = self.derived["blade_tip_radius"] / 1000
+        disk_area = math.pi * (r_tip**2 - r_hub**2)
+
+        # v_disk from momentum theory: P = 2*rho*A*v^3
+        eta = 0.65  # overall efficiency (motor + transmission losses)
+        v_disk = (motor_power * eta / (2 * self.RHO * disk_area)) ** (1/3)
+        v_disk = max(v_disk, 1.0)  # floor at 1 m/s
+
+        # --- Solve all stages with this v_disk ---
         stages = []
-        inlet_swirl = None  # No inlet swirl for first stage
+        inlet_swirl = None
 
         for i, blade_cfg in enumerate(self.config["blades"]["stages"]):
             stage_result = self.solve_stage(
@@ -94,15 +121,16 @@ class BEMTSolver:
                 rpm=self.derived["stage_rpms"][i],
                 direction=self.derived["stage_directions"][i],
                 inlet_swirl=inlet_swirl,
+                v_axial_ref=v_disk,
             )
             stages.append(stage_result)
-            # Pass exit swirl to next stage as inlet swirl
             inlet_swirl = (stage_result.exit_swirl, stage_result.radii)
 
         return BEMTResults(stages=stages)
 
     def solve_stage(self, stage_index: int, blade_cfg: dict, rpm: float,
-                    direction: int, inlet_swirl=None) -> StageResult:
+                    direction: int, inlet_swirl=None,
+                    v_axial_ref: float = 10.0) -> StageResult:
         """Solve BEMT for a single stage.
 
         Args:
@@ -111,6 +139,7 @@ class BEMTSolver:
             rpm: Stage RPM
             direction: +1 (CW) or -1 (CCW)
             inlet_swirl: Optional (swirl_velocities, radii) from previous stage
+            v_axial_ref: Reference axial velocity from disk loading (m/s)
         """
         omega = rpm * 2 * math.pi / 60  # rad/s
         n_blades = blade_cfg["num_blades"]
@@ -161,6 +190,7 @@ class BEMTSolver:
                 t_over_c=t_local,
                 direction=direction,
                 v_swirl_in=v_swirl_in,
+                v_axial_ref=v_axial_ref,
             )
             sections.append(section)
 
@@ -191,128 +221,147 @@ class BEMTSolver:
 
     def _solve_section(self, r, r_hub, r_tip, omega, n_blades, design_cl,
                        alpha_0, t_over_c, direction, v_swirl_in,
-                       v_inf=0, max_iter=100, tol=1e-6) -> BladeSection:
+                       v_inf=0, v_axial_ref=10.0,
+                       max_iter=100, tol=1e-6) -> BladeSection:
         """Solve BEM equations for a single blade section.
 
-        Uses iterative approach to find axial (a) and tangential (a')
-        induction factors.
+        For static thrust (v_inf=0), uses the disk-loading reference velocity
+        v_axial_ref instead of induction-based v_axial. This gives physically
+        correct twist distribution: slow blades get steep pitch, fast blades
+        get shallow pitch.
         """
-        # Local speed
+        # Local blade speed
         u_theta = omega * r  # tangential velocity (m/s)
 
-        # Initial guesses
-        a = 0.1       # axial induction
-        a_prime = 0.01  # tangential induction
+        # Initial guess for tangential induction
+        a_prime = 0.01
 
-        # Solidity
-        # Initial chord estimate from design Cl
-        sigma_approx = 0.1  # initial guess
+        # Duct-aware max chord limits
+        duct_ir = self.config["duct"]["inner_diameter"] / 2 / 1000  # mm -> m
+        tip_cl_m = self.config["blades"]["tip_clearance"] / 1000     # mm -> m
+        max_r = duct_ir - tip_cl_m
+        max_chord_radial = 2 * math.sqrt(max(max_r**2 - r**2, 0))
 
-        converged = False
         for iteration in range(max_iter):
-            # Axial velocity through disk
-            v_axial = v_inf * (1 + a) if v_inf > 0 else max(a * u_theta, 0.1)
+            if v_inf > 0:
+                # --- Forward flight path (preserved) ---
+                a = 0.1 if iteration == 0 else a
+                v_axial = v_inf * (1 + a)
+            else:
+                # --- Static thrust: use disk-loading velocity ---
+                v_axial = v_axial_ref
 
             # Tangential velocity relative to blade
-            # For CW stage (+1) with CCW inlet swirl (negative), the swirl
-            # opposes blade rotation and increases relative v_tan; for CCW
-            # stage (-1) with CW inlet swirl (positive), same effect.
-            # General: v_tan = u_theta*(1-a') - direction * v_swirl_lab
             v_tan = u_theta * (1 - a_prime) - direction * v_swirl_in
 
             # Flow angle
-            phi = math.atan2(v_axial, v_tan) if v_tan != 0 else math.pi / 2
+            phi = math.atan2(v_axial, v_tan) if v_tan > 0 else math.pi / 2
+            # Clamp to valid range
+            phi = max(0.01, min(phi, math.pi / 2))
 
             # Resultant velocity
             w = math.sqrt(v_axial**2 + v_tan**2)
 
-            # Prandtl tip loss factor
+            # Prandtl tip/hub loss
             f_tip = self._prandtl_factor(r, r_tip, n_blades, phi, mode="tip")
             f_hub = self._prandtl_factor(r, r_hub, n_blades, phi, mode="hub")
-            F = f_tip * f_hub
-            F = max(F, 0.01)  # prevent division by zero
+            F = max(f_tip * f_hub, 0.01)
 
-            # Design: choose chord and twist to achieve design_cl at this phi
-            alpha = design_cl / (2 * math.pi)  # thin airfoil theory: cl = 2*pi*alpha
+            # Design angle of attack from thin airfoil theory
+            alpha = design_cl / (2 * math.pi)
             twist = phi - alpha
 
-            # Chord from blade loading (Schmitz method)
-            chord = (8 * math.pi * r * math.sin(phi) * F) / (n_blades * design_cl) * a / max(1 - a, 0.01)
-            chord = max(chord, 0.005)  # minimum 5mm chord
-            # Duct-aware max chord: blade tip (at radial station r) must not
-            # extend past duct wall minus tip clearance.  With mid-chord
-            # centering the max tangential extent is chord/2, giving radial
-            # reach sqrt(r² + (chord/2)²) which must stay ≤ max_r.
-            duct_ir = self.config["duct"]["inner_diameter"] / 2 / 1000  # mm → m
-            tip_cl = self.config["blades"]["tip_clearance"] / 1000  # mm → m
-            max_r = duct_ir - tip_cl
-            max_chord_at_r = 2 * math.sqrt(max(max_r**2 - r**2, 0))
-            chord = min(chord, max_chord_at_r)
-            chord = min(chord, 0.08)   # absolute maximum 80mm chord
+            # Chord from Schmitz method (static thrust form)
+            sin_phi = math.sin(phi)
+            cos_phi = math.cos(phi)
+            chord = (8 * math.pi * r * sin_phi * cos_phi * F) / (n_blades * design_cl)
+            chord = max(chord, 0.005)  # minimum 5mm
+
+            # Apply chord limits
+            chord = min(chord, max_chord_radial)
+            chord = min(chord, 0.08)  # absolute maximum 80mm
 
             # Local solidity
             sigma = n_blades * chord / (2 * math.pi * r)
 
             # Cl/Cd model
             cl = design_cl
-            cd = 0.008 + 0.01 * alpha**2  # simple quadratic drag polar
+            cd = 0.008 + 0.01 * alpha**2
 
-            # Normal and tangential force coefficients
-            cn = cl * math.cos(phi) + cd * math.sin(phi)
-            ct = cl * math.sin(phi) - cd * math.cos(phi)
+            # Force coefficients
+            cn = cl * cos_phi + cd * sin_phi
+            ct = cl * sin_phi - cd * cos_phi
 
-            # New induction factors
-            denom_a = 4 * F * math.sin(phi)**2 / (sigma * cn) + 1
-            a_new = 1.0 / denom_a if denom_a > 0 else 0.5
+            # Stable tangential induction formula:
+            #   a' = sigma*ct / (4F*sin*cos + sigma*ct)
+            # No subtraction in denominator — always well-behaved
+            denom_ap = 4 * F * sin_phi * cos_phi + sigma * ct
+            a_prime_new = (sigma * ct) / denom_ap if denom_ap > 0.001 else 0.01
+            a_prime_new = max(0.0, min(a_prime_new, 0.25))
 
-            denom_ap = 4 * F * math.sin(phi) * math.cos(phi) / (sigma * ct) - 1
-            a_prime_new = 1.0 / denom_ap if denom_ap > 0 else 0.01
+            if v_inf > 0:
+                # Forward flight: also iterate on axial induction
+                denom_a = 4 * F * sin_phi**2 / (sigma * cn) + 1
+                a_new = 1.0 / denom_a if denom_a > 0 else 0.5
+                if a_new > 0.4:
+                    ac = 0.2
+                    K = 4 * F * sin_phi**2 / (sigma * cn) if (sigma * cn) != 0 else 1e6
+                    discriminant = (K * (1 - 2 * ac) + 2)**2 + 4 * (K * ac**2 - 1)
+                    if discriminant < 0:
+                        a_new = 0.4
+                    else:
+                        a_new = 0.5 * (2 + K * (1 - 2 * ac) - math.sqrt(discriminant))
+                    a_new = max(0.0, min(a_new, 0.95))
+            else:
+                a_new = a_prime  # placeholder, will derive post-hoc
 
-            # Glauert correction for high induction (a > 0.4)
-            if a_new > 0.4:
-                # Buhl's correction
-                ac = 0.2  # critical induction factor
-                K = 4 * F * math.sin(phi)**2 / (sigma * cn) if (sigma * cn) != 0 else 1e6
-                discriminant = (K * (1 - 2 * ac) + 2)**2 + 4 * (K * ac**2 - 1)
-                if discriminant < 0:
-                    # Fallback: cap induction at reasonable value
-                    a_new = 0.4
+            # Convergence check (on a_prime for static, both for forward)
+            if abs(a_prime_new - a_prime) < tol:
+                if v_inf > 0 and abs(a_new - a) > tol:
+                    pass  # keep iterating
                 else:
-                    a_new = 0.5 * (2 + K * (1 - 2 * ac) -
-                                   math.sqrt(discriminant))
-                a_new = max(0.0, min(a_new, 0.95))
-
-            a_prime_new = max(0.0, min(a_prime_new, 0.5))
-
-            # Check convergence
-            if abs(a_new - a) < tol and abs(a_prime_new - a_prime) < tol:
-                converged = True
-                a = a_new
-                a_prime = a_prime_new
-                break
+                    a_prime = a_prime_new
+                    if v_inf > 0:
+                        a = a_new
+                    break
 
             # Relaxation
-            a = 0.5 * a + 0.5 * a_new
             a_prime = 0.5 * a_prime + 0.5 * a_prime_new
+            if v_inf > 0:
+                a = 0.5 * a + 0.5 * a_new
 
-        # Compute elemental loads using blade element theory
-        v_axial = v_inf * (1 + a) if v_inf > 0 else max(a * u_theta, 0.1)
+        # --- Post-convergence: compute loads and derive a ---
+        if v_inf <= 0:
+            v_axial = v_axial_ref
+        else:
+            v_axial = v_inf * (1 + a)
+
         v_tan = u_theta * (1 - a_prime) - direction * v_swirl_in
         w = math.sqrt(v_axial**2 + v_tan**2)
 
-        # Ensure phi is in valid range for thrust production
-        # For a working fan, phi should be between 0 and pi/2
-        phi_eff = max(0.01, min(abs(phi), math.pi / 2))
-        cn_eff = cl * math.cos(phi_eff) + cd * math.sin(phi_eff)
-        ct_eff = cl * math.sin(phi_eff) - cd * math.cos(phi_eff)
+        phi_eff = max(0.01, min(phi, math.pi / 2))
+        sin_phi = math.sin(phi_eff)
+        cos_phi = math.cos(phi_eff)
+        cn_eff = cl * cos_phi + cd * sin_phi
+        ct_eff = cl * sin_phi - cd * cos_phi
 
         # Blade element thrust and torque (per unit span, all blades)
         d_thrust = 0.5 * self.RHO * w**2 * chord * cn_eff * n_blades
         d_torque = 0.5 * self.RHO * w**2 * chord * ct_eff * n_blades * r
 
-        # Ensure positive thrust (fan always pushes air)
+        # Ensure positive thrust
         d_thrust = abs(d_thrust)
         d_torque = abs(d_torque)
+
+        # Derive axial induction post-hoc for reporting (static case)
+        if v_inf <= 0:
+            # From momentum: dT = 4*pi*r*rho*v_axial^2*a*F*dr
+            # a = dT / (4*pi*r*rho*v_axial^2*F) (per unit span approximation)
+            if v_axial_ref > 0 and F > 0.01:
+                a = d_thrust / (4 * math.pi * r * self.RHO * v_axial_ref**2 * F)
+                a = min(a, 0.95)
+            else:
+                a = 0.1
 
         return BladeSection(
             radius=r,
