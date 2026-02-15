@@ -214,8 +214,20 @@ class AssemblyGenerator:
 
         return report
 
-    def generate_all_solids(self) -> Dict[str, cq.Workplane]:
+    # Part names that are hub internal mechanics (gears, carriers, shafts,
+    # coupling discs, ring output hubs). These can be excluded with
+    # --exclude-internals so the user can design them separately.
+    INTERNAL_PREFIXES = (
+        "gear_", "carrier_", "inner_shaft", "middle_tube", "outer_tube",
+        "coupling_disc_", "ring_output_hub_",
+    )
+
+    def generate_all_solids(self, exclude_internals: bool = False) -> Dict[str, cq.Workplane]:
         """Generate all CAD geometry as CadQuery solids.
+
+        Args:
+            exclude_internals: If True, skip hub internal mechanics (gears,
+                carriers, shafts, coupling discs, ring output hubs).
 
         Returns dict of part_name -> cq.Workplane
         """
@@ -243,31 +255,32 @@ class AssemblyGenerator:
         for j, section in enumerate(duct_sections):
             solids[f"duct_section_{j+1}"] = section
 
-        # Gear stages
-        gear_gen = GearGenerator(self.config)
-        num_gear_stages = self.config["gears"].get("num_stages", 1)
-        for stage_idx in range(num_gear_stages):
-            gear_solids = gear_gen.generate_planetary_stage(stage_idx)
-            solids.update(gear_solids)
+        if not exclude_internals:
+            # Gear stages
+            gear_gen = GearGenerator(self.config)
+            num_gear_stages = self.config["gears"].get("num_stages", 1)
+            for stage_idx in range(num_gear_stages):
+                gear_solids = gear_gen.generate_planetary_stage(stage_idx)
+                solids.update(gear_solids)
 
-        # Carrier plates
-        carrier_gen = CarrierGenerator(self.config)
-        carrier_solids = carrier_gen.generate_all_carriers()
-        solids.update(carrier_solids)
+            # Carrier plates
+            carrier_gen = CarrierGenerator(self.config)
+            carrier_solids = carrier_gen.generate_all_carriers()
+            solids.update(carrier_solids)
 
-        # Concentric shafts and tubes
-        shaft_gen = ShaftGenerator(self.config)
-        shaft_solids = shaft_gen.generate_all()
-        solids.update(shaft_solids)
+            # Concentric shafts and tubes
+            shaft_gen = ShaftGenerator(self.config)
+            shaft_solids = shaft_gen.generate_all()
+            solids.update(shaft_solids)
 
         return solids
 
-    def generate_all_meshes(self) -> Dict[str, trimesh.Trimesh]:
+    def generate_all_meshes(self, exclude_internals: bool = False) -> Dict[str, trimesh.Trimesh]:
         """Generate all CAD geometry and convert to trimesh for validation.
 
         Returns dict of part_name -> trimesh.Trimesh
         """
-        solids = self.generate_all_solids()
+        solids = self.generate_all_solids(exclude_internals=exclude_internals)
         meshes = {}
         for name, solid in solids.items():
             meshes[name] = self._cq_to_trimesh(solid)
@@ -334,11 +347,13 @@ class AssemblyGenerator:
 
         return 0.0
 
-    def generate_and_export(self, parts: Optional[List[str]] = None) -> dict:
+    def generate_and_export(self, parts: Optional[List[str]] = None,
+                            exclude_internals: bool = False) -> dict:
         """Generate geometry, validate, and export STLs (Step 2: --generate).
 
         Args:
             parts: Optional list of specific parts to generate. None = all.
+            exclude_internals: If True, skip hub internal mechanics.
 
         Returns:
             Dict with export results and validation status
@@ -351,7 +366,7 @@ class AssemblyGenerator:
         }
 
         # Generate meshes
-        meshes = self.generate_all_meshes()
+        meshes = self.generate_all_meshes(exclude_internals=exclude_internals)
 
         # Filter if specific parts requested
         if parts:

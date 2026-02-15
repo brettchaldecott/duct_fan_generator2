@@ -8,6 +8,7 @@ Usage:
     python main.py --validate-only              # Validate existing STLs
     python main.py --view                       # Open interactive 3D viewer
     python main.py --generate --view            # Generate then view
+    python main.py --generate --exclude-internals  # Generate without hub internals
 """
 
 import argparse
@@ -60,6 +61,11 @@ def main():
         "--step", action="store_true",
         help="Export STEP files alongside STLs (for FreeCAD workflow)"
     )
+    parser.add_argument(
+        "--exclude-internals", action="store_true",
+        help="Exclude hub internal mechanics (gears, carriers, shafts, "
+             "coupling discs, ring output hubs) from generation"
+    )
 
     args = parser.parse_args()
 
@@ -92,9 +98,9 @@ def main():
     if args.analyze:
         run_analysis(config, bemt_results)
     if args.generate:
-        run_generate(config, bemt_results, args.part, args.force)
+        run_generate(config, bemt_results, args.part, args.force, args.exclude_internals)
     if args.step:
-        run_step_export(config, bemt_results)
+        run_step_export(config, bemt_results, args.exclude_internals)
     if args.validate_only:
         run_validate_only(config)
     if args.view:
@@ -132,7 +138,7 @@ def run_analysis(config, bemt_results):
     return analysis
 
 
-def run_generate(config, bemt_results, part=None, force=False):
+def run_generate(config, bemt_results, part=None, force=False, exclude_internals=False):
     """Step 2: Generate STLs with validation gate."""
     print("\n" + "=" * 60)
     print("GENERATING CAD GEOMETRY")
@@ -158,7 +164,7 @@ def run_generate(config, bemt_results, part=None, force=False):
     # Generate and export
     parts_filter = [part] if part else None
     print("\nGenerating geometry...")
-    result = generator.generate_and_export(parts_filter)
+    result = generator.generate_and_export(parts_filter, exclude_internals=exclude_internals)
 
     print(f"\nExported {len(result['exported_files'])} STL files:")
     for f in result["exported_files"]:
@@ -181,7 +187,7 @@ def run_generate(config, bemt_results, part=None, force=False):
     print("\nReports saved to output/")
 
 
-def run_step_export(config, bemt_results):
+def run_step_export(config, bemt_results, exclude_internals=False):
     """Export STEP files for FreeCAD workflow."""
     print("\n" + "=" * 60)
     print("EXPORTING STEP FILES")
@@ -189,7 +195,7 @@ def run_step_export(config, bemt_results):
 
     generator = AssemblyGenerator(config, bemt_results)
     print("Generating solids...")
-    solids = generator.generate_all_solids()
+    solids = generator.generate_all_solids(exclude_internals=exclude_internals)
     print(f"  Generated {len(solids)} parts")
 
     print("Exporting STEP files...")
